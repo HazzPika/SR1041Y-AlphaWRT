@@ -1,5 +1,6 @@
 # Gravity is in RAM: rebuild it once the box can reach the internet after a
-# boot: wan in combo/router mode, gnmgmt (via its gateway) in bridge mode.
+# boot: wan in combo/router mode, gnmgmt (via its gateway) in bridge mode,
+# usbwan when a phone shares its Internet over USB.
 [ "$ACTION" = ifup ] || exit 0
-[ "$INTERFACE" = wan ] || [ "$INTERFACE" = gnmgmt ] || exit 0
+case "$INTERFACE" in wan|gnmgmt|usbwan) ;; *) exit 0 ;; esac
 (/usr/local/bin/pihole ensure >/dev/null 2>&1 &)
