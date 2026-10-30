@@ -16,6 +16,8 @@ OpenWrt for the Skyworth GN630V GPON ONT (AX3000), an Airoha **AN7529CT** (EN752
 > **Status: early test builds.** Verified on hardware: booting from either bank, the persistent overlay, the LAN switch, Wi-Fi 6 on both bands, encrypted DNS, LuCI, installing from the stock web UI, and going back to stock. GPON: the optics (EN7571, with the unit's own calibration) and the PON MAC come up and report loss of signal without fibre.
 > **Test status:** GPON registration has reached O5 on a live line. Stable Internet service over fibre is still under test. Read [Recovery](docs/RECOVERY.md) before flashing.
 
+> **Also: FiberHome SR1041Y** (EN7561DU / EN7528, TM Unifi), early bring-up: installs to flash bank B next to stock, LAN, Wi-Fi 6, Pi-hole; no GPON yet. Build with `DEVICE=sr1041y ./build.sh`; see [docs/SR1041Y.md](docs/SR1041Y.md).
+
 ## Hardware
 
 ### Which GN630V do you have?

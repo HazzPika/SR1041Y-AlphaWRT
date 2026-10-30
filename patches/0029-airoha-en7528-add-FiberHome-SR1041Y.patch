@@ -1,0 +1,526 @@
+From 9f97925f3caee6c51bf821f2139863cd8f4c5ca0 Mon Sep 17 00:00:00 2001
+From: HazzPika <188178761+HazzPika@users.noreply.github.com>
+Date: Fri, 30 Oct 2026 23:26:11 +0800
+Subject: [PATCH 29/29] airoha: en7528: add FiberHome SR1041Y
+
+GPON ONT + router TM supplies with Unifi in Malaysia: EN7561DU (EN7528
+platform, "free bootbase"), 256 MB, 256 MiB Micron MT29F2G01 SPI-NAND,
+4x GbE, MT7915 DBDC on PCIe, EN7571 xPON with an EN7570 laser driver.
+
+- runs from bank B in the stock bank format: kernel trx in UBI volume
+  ID 0 (what the bootbase loads), rootfs and rootfs_data alongside;
+  bank A keeps the stock firmware; KernelB attached as linux,ubi
+- sysupgrade into bank B, kernel volume created static with ID 0;
+  alphawrt-bootbank with the GN630V interface, flipping the boot flag
+  record the bootbase reads from bank A's UBI volumes 3/4
+- MACs and MT7915 calibration from the stock UBIFS "factory" volume on
+  the "config" UBI, attached read-only; mounted in 09_mount_factory_data
+  through that UBI device ("ubi:NAME" only searches ubi0)
+- MT7915 on the main PCIe link only: binding through HIF2 (pcie0)
+  resets the SoC
+- GbE PHYs enabled (the dtsi disables them); UART clock 7.3728 MHz, as
+  the free bootbase leaves the XYD divider set up
+- no GPON yet: xpon, gdm2 and the EN7571 are left disabled
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../etc/hotplug.d/ieee80211/10_fix_wifi_mac   |   4 +
+ .../airoha/base-files/lib/functions/econet.sh |  14 ++
+ .../lib/preinit/09_mount_factory_data         |  20 ++
+ .../airoha/dts/en7528_fiberhome_sr1041y.dts   | 176 ++++++++++++++++++
+ .../en7528/base-files/etc/board.d/02_network  |   5 +
+ .../base-files/lib/preinit/79_sr1041y_factory |  19 ++
+ .../en7528/base-files/lib/upgrade/platform.sh |  14 ++
+ .../base-files/usr/sbin/alphawrt-bootbank     | 126 +++++++++++++
+ target/linux/airoha/image/en7528.mk           |  13 ++
+ 9 files changed, 391 insertions(+)
+ create mode 100644 target/linux/airoha/dts/en7528_fiberhome_sr1041y.dts
+ create mode 100644 target/linux/airoha/en7528/base-files/lib/preinit/79_sr1041y_factory
+ create mode 100755 target/linux/airoha/en7528/base-files/usr/sbin/alphawrt-bootbank
+
+diff --git a/target/linux/airoha/base-files/etc/hotplug.d/ieee80211/10_fix_wifi_mac b/target/linux/airoha/base-files/etc/hotplug.d/ieee80211/10_fix_wifi_mac
+index 79dbc9b45c..306ede3d5a 100755
+--- a/target/linux/airoha/base-files/etc/hotplug.d/ieee80211/10_fix_wifi_mac
++++ b/target/linux/airoha/base-files/etc/hotplug.d/ieee80211/10_fix_wifi_mac
+@@ -14,6 +14,10 @@ chinamobile,gs3101)
+ 	mac=$(get_mac_gs3101)
+ 	[ -n "$mac" ] && echo "$(macaddr_add $mac 2)" > /sys${DEVPATH}/macaddress
+ 	;;
++fiberhome,sr1041y)
++	mac=$(get_mac_sr1041y brmac)
++	[ -n "$mac" ] && echo "$(macaddr_add $mac $((PHYNBR + 2)))" > /sys${DEVPATH}/macaddress
++	;;
+ huawei,hg2821t-u)
+ 	conffile="/tmp/configuration_a/factory.conf"
+ 	[ "$PHYNBR" -eq 0 ] && get_mac_ascii "$conffile" APMAC_5G > /sys${DEVPATH}/macaddress
+diff --git a/target/linux/airoha/base-files/lib/functions/econet.sh b/target/linux/airoha/base-files/lib/functions/econet.sh
+index 48115058f0..cf98568cff 100644
+--- a/target/linux/airoha/base-files/lib/functions/econet.sh
++++ b/target/linux/airoha/base-files/lib/functions/econet.sh
+@@ -1,5 +1,19 @@
+ # SPDX-License-Identifier: GPL-2.0
+ 
++# FiberHome SR1041Y keeps its MACs in factory_conf on the UBIFS "factory"
++# volume (mounted by 79_sr1041y_factory), as uci-like
++# "config key '<name>'" / "option value '<mac>'" pairs.
++get_mac_sr1041y() {
++	local conffile="/tmp/factory/factory_conf"
++
++	[ -f "$conffile" ] || return
++	awk -v k="$1" '
++		$1 == "config" && $2 == "key" { cur = $3; gsub("\047", "", cur); next }
++		cur == k && $1 == "option" && $2 == "value" {
++			v = $3; gsub("\047", "", v); print tolower(v); exit
++		}' "$conffile"
++}
++
+ get_mac_gs3101() {
+ 	local part_name="romfile"
+ 	local idx;
+diff --git a/target/linux/airoha/base-files/lib/preinit/09_mount_factory_data b/target/linux/airoha/base-files/lib/preinit/09_mount_factory_data
+index a6e553b586..0f69300550 100644
+--- a/target/linux/airoha/base-files/lib/preinit/09_mount_factory_data
++++ b/target/linux/airoha/base-files/lib/preinit/09_mount_factory_data
+@@ -7,8 +7,28 @@ preinit_mount_factory_data() {
+ 	mount -o ro,noatime -t jffs2 "$mtd_path" "/tmp/$1"
+ }
+ 
++# FiberHome SR1041Y: the MACs and the Wi-Fi calibration are files in the UBIFS
++# volume "factory" on the stock "config" UBI. The kernel attaches "config"
++# itself (linux,ubi in DTS), read-only because the partition is read-only, so
++# nothing here can write to flash.
++preinit_mount_factory_ubifs() {
++	local idx=$(find_mtd_index config) d
++
++	# "ubi:NAME" only looks at ubi0, which is the system's own UBI once
++	# AlphaWRT boots from flash: mount through the device "config" sits on
++	for d in /sys/class/ubi/ubi[0-9]*; do
++		[ "$(cat "$d/mtd_num" 2>/dev/null)" = "$idx" ] || continue
++		mkdir -p /tmp/factory
++		mount -t ubifs -o ro "${d##*/}:factory" /tmp/factory
++		return
++	done
++}
++
+ preinit_mount_factory_partitions() {
+ 	case $(board_name) in
++	fiberhome,sr1041y)
++		preinit_mount_factory_ubifs
++		;;
+ 	huawei,hg2821t-u)
+ 		preinit_mount_factory_data configuration_a
+ 		;;
+diff --git a/target/linux/airoha/dts/en7528_fiberhome_sr1041y.dts b/target/linux/airoha/dts/en7528_fiberhome_sr1041y.dts
+new file mode 100644
+index 0000000000..0c2cdfbc9a
+--- /dev/null
++++ b/target/linux/airoha/dts/en7528_fiberhome_sr1041y.dts
+@@ -0,0 +1,176 @@
++// SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++/*
++ * FiberHome SR1041Y (HW SR1041Y_R1A), sold by TM (Unifi, Malaysia).
++ * GPON ONT + router: EN7561DU (EN7528 platform, "free bootbase" v1.1),
++ * 256 MiB DDR3, Micron MT29F2G01 256 MiB SPI-NAND, 4x GbE, MT7915 DBDC
++ * Wi-Fi 6, EN7571 xPON with an EN7570 laser driver.
++ *
++ * Flash keeps the stock layout; both kernel banks are UBI (vols ubi_kernel,
++ * ubi_rootfs, ubi_fhapp, ubi_flagA, ubi_flagB):
++ *   boot    0x0000000-0x0200000  free bootbase
++ *   KernelA 0x0200000-0x2a00000  bank A (stock ubi.mtd=1)
++ *   KernelB 0x2a00000-0x5200000  bank B (stock ubi.mtd=2)
++ *   config  0x5200000-0x7500000  UBI: factory, userdata, reserved
++ * The MACs and the Wi-Fi calibration live as files in the UBIFS "factory"
++ * volume; the kernel attaches "config" read-only and preinit mounts
++ * ubi:factory (see 79_sr1041y_factory).
++ */
++
++/dts-v1/;
++
++#include "en7528.dtsi"
++
++#include <dt-bindings/gpio/gpio.h>
++#include <dt-bindings/input/input.h>
++#include <dt-bindings/leds/common.h>
++
++/ {
++	model = "FiberHome SR1041Y";
++	compatible = "fiberhome,sr1041y", "econet,en7528";
++
++	memory@0 {
++		device_type = "memory";
++		reg = <0x00000000 0x10000000>;
++	};
++
++	/* stdout-path comes from the dtsi (serial0); only the RAM size differs */
++	chosen {
++		linux,usable-memory-range = <0x00020000 0x0efe0000>;
++	};
++};
++
++/*
++ * The free bootbase leaves the UART's XYD fractional divider set up for a
++ * 7.3728 MHz base clock, not the 1.8432 MHz the dtsi assumes for U-Boot
++ * boards: with the default the console turns to garbage at handover.
++ */
++&uart1 {
++	clock-frequency = <7372800>;
++};
++
++&usb {
++	status = "okay";
++};
++
++/*
++ * One MT7915 (DBDC 2.4 + 5 GHz). The main function sits behind pcie1
++ * (0001:01:00.0); the board also wires its second host interface (HIF2) to
++ * pcie0, but on EN7528 mt7915e resets the SoC as soon as it binds through
++ * HIF2. On the main link alone both bands come up fine (tested), so pcie0
++ * stays disabled.
++ */
++&pcie1 {
++	status = "okay";
++};
++
++&slot1 {
++	status = "okay";
++
++	wifi@0,0 {
++		compatible = "mediatek,mt76";
++		reg = <0x0000 0 0 0 0>;
++		mediatek,eeprom-name = "mediatek/mt7915_eeprom_sr1041y.bin";
++	};
++};
++
++&eth {
++	status = "okay";
++};
++
++&gdm1 {
++	status = "okay";
++};
++
++&switch {
++	status = "okay";
++};
++
++/* the dtsi leaves the internal GbE PHYs disabled */
++&gsw_phy1 {
++	status = "okay";
++};
++
++&gsw_phy2 {
++	status = "okay";
++};
++
++&gsw_phy3 {
++	status = "okay";
++};
++
++&gsw_phy4 {
++	status = "okay";
++};
++
++&gsw_port1 {
++	label = "lan1";
++	status = "okay";
++};
++
++&gsw_port2 {
++	label = "lan2";
++	status = "okay";
++};
++
++&gsw_port3 {
++	label = "lan3";
++	status = "okay";
++};
++
++&gsw_port4 {
++	label = "lan4";
++	status = "okay";
++};
++
++&spi {
++	flash@0 {
++		compatible = "spi-nand";
++		reg = <0>;
++		spi-max-frequency = <40000000>;
++		spi-tx-bus-width = <1>;
++		spi-rx-bus-width = <2>;
++		econet,bmt;
++		econet,bbt-table-size = <250>;
++
++		partitions {
++			compatible = "fixed-partitions";
++			#address-cells = <1>;
++			#size-cells = <1>;
++
++			partition@0 {
++				label = "boot";
++				reg = <0x0 0x200000>;
++				read-only;
++			};
++
++			partition@200000 {
++				label = "KernelA";
++				reg = <0x200000 0x2800000>;
++			};
++
++			/*
++			 * AlphaWRT lives in bank B, in the stock bank format: the
++			 * bootbase loads the kernel trx from UBI volume ID 0; the
++			 * kernel attaches this UBI and mounts volume "rootfs".
++			 * Bank A stays stock; its UBI is not attached at boot.
++			 */
++			partition@2a00000 {
++				compatible = "linux,ubi";
++				label = "KernelB";
++				reg = <0x2a00000 0x2800000>;
++			};
++
++			/*
++			 * Stock UBI (factory, userdata, reserved). The kernel
++			 * attaches it, read-only because the partition is, so
++			 * nothing can ever write to it.
++			 */
++			partition@5200000 {
++				compatible = "linux,ubi";
++				label = "config";
++				reg = <0x5200000 0x2300000>;
++				read-only;
++			};
++		};
++	};
++};
+diff --git a/target/linux/airoha/en7528/base-files/etc/board.d/02_network b/target/linux/airoha/en7528/base-files/etc/board.d/02_network
+index 7774b3aac4..5bc12c8f15 100644
+--- a/target/linux/airoha/en7528/base-files/etc/board.d/02_network
++++ b/target/linux/airoha/en7528/base-files/etc/board.d/02_network
+@@ -10,6 +10,7 @@ econet_setup_interfaces()
+ 	dasan,h660gm-a-airtel|\
+ 	dasan,h660gm-a-generic|\
+ 	econet,en7528-generic|\
++	fiberhome,sr1041y|\
+ 	jiofiber,jcow407|\
+ 	jiofiber,jcow414)
+ 		ucidef_set_interface_lan "lan1 lan2 lan3 lan4"
+@@ -37,6 +38,10 @@ econet_setup_macs()
+ 		wan_mac="$(get_mac_gs3101)"
+ 		[ -n "$wan_mac" ] && lan_mac="$(macaddr_add $wan_mac 1)"
+ 		;;
++	fiberhome,sr1041y)
++		lan_mac=$(get_mac_sr1041y brmac)
++		[ -n "$lan_mac" ] && label_mac="$(macaddr_add $lan_mac -1)"
++		;;
+ 	huawei,hg2821t-u)
+ 		local conffile="/tmp/configuration_a/factory.conf"
+ 		lan_mac=$(get_mac_ascii "$conffile" brmac)
+diff --git a/target/linux/airoha/en7528/base-files/lib/preinit/79_sr1041y_factory b/target/linux/airoha/en7528/base-files/lib/preinit/79_sr1041y_factory
+new file mode 100644
+index 0000000000..0e306fd46a
+--- /dev/null
++++ b/target/linux/airoha/en7528/base-files/lib/preinit/79_sr1041y_factory
+@@ -0,0 +1,19 @@
++# FiberHome SR1041Y: copy the Wi-Fi calibration out of the "factory" volume,
++# which 09_mount_factory_data mounts read-only at /tmp/factory.
++
++# Named to match the Wi-Fi node's "mediatek,eeprom-name", so mt76 loads it as
++# its OF EEPROM. Needs a writable /lib/firmware: after mount_root for
++# squashfs + overlay, or on the initramfs root.
++sr1041y_place_wifi_eeprom() {
++	local src=/tmp/factory/wlan/RT30xxEEPROM_5.bin
++	local dst=/lib/firmware/mediatek/mt7915_eeprom_sr1041y.bin
++
++	[ "$(board_name)" = "fiberhome,sr1041y" ] || return
++	[ -f "$src" ] || return
++	[ -f "$dst" ] && return
++	mkdir -p "${dst%/*}"
++	cp "$src" "$dst"
++}
++
++boot_hook_add preinit_mount_root sr1041y_place_wifi_eeprom
++boot_hook_add initramfs sr1041y_place_wifi_eeprom
+diff --git a/target/linux/airoha/en7528/base-files/lib/upgrade/platform.sh b/target/linux/airoha/en7528/base-files/lib/upgrade/platform.sh
+index 92b88fd168..2fb37404a2 100644
+--- a/target/linux/airoha/en7528/base-files/lib/upgrade/platform.sh
++++ b/target/linux/airoha/en7528/base-files/lib/upgrade/platform.sh
+@@ -12,6 +12,20 @@ platform_do_upgrade() {
+     CI_KERNPART="tclinux_kernel"
+     nand_do_upgrade "$1"
+     ;;
++  fiberhome,sr1041y)
++    # AlphaWRT lives in bank B. The free bootbase loads the kernel trx from
++    # UBI volume ID 0 of the bank; create it static with that ID, as stock
++    # does, rather than letting nand.sh make a dynamic one.
++    CI_UBIPART="KernelB"
++    CI_KERNPART="ubi_kernel"
++    ubimkvol() {
++      case " $* " in
++      *" -N ubi_kernel "*) command ubimkvol "$@" -n 0 -t static ;;
++      *) command ubimkvol "$@" ;;
++      esac
++    }
++    nand_do_upgrade "$1"
++    ;;
+   tplink,xc220-g3v)
+     # Raw NOR, no UBI: the whole sysupgrade.bin (FIT kernel + squashfs
+     # rootfs + metadata) goes straight into the "firmware" MTD partition.
+diff --git a/target/linux/airoha/en7528/base-files/usr/sbin/alphawrt-bootbank b/target/linux/airoha/en7528/base-files/usr/sbin/alphawrt-bootbank
+new file mode 100755
+index 0000000000..009a08db0f
+--- /dev/null
++++ b/target/linux/airoha/en7528/base-files/usr/sbin/alphawrt-bootbank
+@@ -0,0 +1,126 @@
++#!/bin/sh
++# Choose which flash bank the free bootbase boots next on the FiberHome
++# SR1041Y. Same interface and output as the GN630V tool, so the AlphaWRT UI
++# (System -> Firmware banks) works unchanged.
++#
++#   alphawrt-bootbank          show the running bank, the next-boot bank and
++#                              what each bank holds
++#   alphawrt-bootbank stock    boot the other bank (stock) from the next boot
++#   alphawrt-bootbank a|b      boot bank A or B from the next boot
++#
++# The bootbase reads a 16-byte boot flag record from bank A's UBI volumes 3
++# (ubi_flagA) and 4 (ubi_flagB): byte 0 = kernel bank (0 = A, 1 = B), then
++# zeros, then the JAMCRC of bytes 0-11, big-endian. It loads the kernel trx
++# from UBI volume 0 of that bank and falls back to the other bank if its CRC
++# is wrong. See BANK-FORMAT.md.
++
++. /lib/functions.sh
++
++[ "$(board_name)" = "fiberhome,sr1041y" ] || { echo "not an SR1041Y" >&2; exit 1; }
++
++A_MTD=$(find_mtd_index KernelA)
++B_MTD=$(find_mtd_index KernelB)
++TMPDEV=6
++
++# the two possible records (rootfs/app bytes stay 0, as stock writes them)
++flag_record() {
++	case "$1" in
++	a) printf '\000\000\000\000\000\000\000\000\000\000\000\000\204\052\071\220' ;;
++	b) printf '\001\000\000\000\000\000\000\000\000\000\000\000\037\217\165\377' ;;
++	esac
++}
++
++# ubi device number a given mtd is attached as, if any
++ubi_of_mtd() {
++	local d
++	for d in /sys/class/ubi/ubi[0-9]*; do
++		[ -f "$d/mtd_num" ] && [ "$(cat "$d/mtd_num")" = "$1" ] && { echo "${d##*/ubi}"; return 0; }
++	done
++	return 1
++}
++
++# run "$@" with bank A's UBI attached, as /dev/ubi$A_UBI
++with_bank_a() {
++	local attached=
++	A_UBI=$(ubi_of_mtd "$A_MTD") || {
++		ubiattach -m "$A_MTD" -d $TMPDEV >/dev/null 2>&1 || return 1
++		A_UBI=$TMPDEV attached=1
++	}
++	"$@"; local rc=$?
++	[ -n "$attached" ] && ubidetach -d $TMPDEV >/dev/null 2>&1
++	return $rc
++}
++
++read_next() {
++	case "$(head -c 1 "/dev/ubi${A_UBI}_3" | hexdump -e '1/1 "%d"')" in
++	0) echo a ;;
++	1) echo b ;;
++	*) echo "?" ;;
++	esac
++}
++
++write_flag() {
++	[ "$(cat "/sys/class/ubi/ubi${A_UBI}_3/name")" = ubi_flagA ] || return 1
++	[ "$(cat "/sys/class/ubi/ubi${A_UBI}_4/name")" = ubi_flagB ] || return 1
++	flag_record "$1" > /tmp/.bootflag
++	ubiupdatevol "/dev/ubi${A_UBI}_3" /tmp/.bootflag &&
++	ubiupdatevol "/dev/ubi${A_UBI}_4" /tmp/.bootflag
++	local rc=$?
++	rm -f /tmp/.bootflag
++	return $rc
++}
++
++# version string of the kernel trx in UBI volume 0 of a bank
++bank_holds() {
++	local mtd dev attached= magic version
++	[ "$1" = a ] && mtd=$A_MTD || mtd=$B_MTD
++	dev=$(ubi_of_mtd "$mtd") || {
++		ubiattach -m "$mtd" -d $((TMPDEV + 1)) >/dev/null 2>&1 || { echo "no UBI"; return 1; }
++		dev=$((TMPDEV + 1)) attached=1
++	}
++	magic=$(head -c 4 "/dev/ubi${dev}_0" 2>/dev/null)
++	case "$magic" in
++	HDR0|HDR2) version=$(dd if="/dev/ubi${dev}_0" bs=1 skip=16 count=31 2>/dev/null | tr -d '\0\n') ;;
++	esac
++	[ -n "$attached" ] && ubidetach -d $((TMPDEV + 1)) >/dev/null 2>&1
++	[ -n "$version" ] || { echo "no bootable image"; return 1; }
++	echo "$version"
++}
++
++# the bank the root filesystem came from; empty on a RAM boot. AlphaWRT only
++# runs from bank B (bank A keeps the stock firmware), with its squashfs root
++# on the ubiblock of bank B's "rootfs" volume.
++running_bank() {
++	local b
++	b=$(ubi_of_mtd "$B_MTD") || return 0
++	grep -qs '^/dev/root ' /proc/mounts && [ -b "/dev/ubiblock${b}_1" ] && echo b
++}
++
++running=$(running_bank)
++next=$(with_bank_a read_next) || next="?"
++
++case "$1" in
++"")
++	echo "running:   bank ${running:-? (RAM boot)}"
++	echo "next boot: bank $next"
++	for b in a b; do
++		echo "bank $b:    $(bank_holds $b)"
++	done
++	;;
++stock)
++	[ -n "$running" ] || { echo "not booted from flash" >&2; exit 1; }
++	[ "$running" = a ] && other=b || other=a
++	holds=$(bank_holds $other) || { echo "bank $other: $holds, not switching" >&2; exit 1; }
++	with_bank_a write_flag $other || { echo "could not write the boot flag" >&2; exit 1; }
++	echo "next boot: bank $other ($holds). Reboot to switch."
++	;;
++a|b)
++	holds=$(bank_holds "$1") || { echo "bank $1: $holds, not switching" >&2; exit 1; }
++	with_bank_a write_flag "$1" || { echo "could not write the boot flag" >&2; exit 1; }
++	echo "next boot: bank $1 ($holds). Reboot to switch."
++	;;
++*)
++	echo "usage: $0 [stock|a|b]" >&2
++	exit 1
++	;;
++esac
+diff --git a/target/linux/airoha/image/en7528.mk b/target/linux/airoha/image/en7528.mk
+index 4b196048fd..cb121b3368 100644
+--- a/target/linux/airoha/image/en7528.mk
++++ b/target/linux/airoha/image/en7528.mk
+@@ -43,6 +43,19 @@ define Device/tplink_xc220-g3v
+ endef
+ TARGET_DEVICES += tplink_xc220-g3v
+ 
++define Device/fiberhome_sr1041y
++  $(call Device/tclinux-ubi)
++  DEVICE_VENDOR := FiberHome
++  DEVICE_MODEL := SR1041Y
++  DEVICE_DTS := en7528_fiberhome_sr1041y
++  FACTORY_SIZE := 40m
++  TRX_LOADADDR := 0x80002000
++  KERNEL := kernel-bin | append-dtb | tclinux-free-bootbase-jump | lzma | \
++    kernel-trx
++  DEVICE_PACKAGES := kmod-usb3 kmod-mt7915e kmod-mt7915-firmware
++endef
++TARGET_DEVICES += fiberhome_sr1041y
++
+ define Device/jiofiber_en7528
+   $(call Device/tclinux-ubi)
+   DEVICE_VENDOR := JioFiber
+-- 
+2.53.0
+

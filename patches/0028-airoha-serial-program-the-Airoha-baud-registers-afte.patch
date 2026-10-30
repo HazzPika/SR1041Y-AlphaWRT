@@ -1,0 +1,64 @@
+From a4657a62e0f2c635f8e6ffb4ffe97eb402aff721 Mon Sep 17 00:00:00 2001
+From: HazzPika <188178761+HazzPika@users.noreply.github.com>
+Date: Fri, 30 Oct 2026 23:26:11 +0800
+Subject: [PATCH 28/29] airoha: serial: program the Airoha baud registers after
+ the divisor
+
+886-uart-add-en7523-support.patch calls en7523_set_uart_baud_rate()
+before serial8250_set_divisor(), which then overwrites BRD. Any uartclk
+other than 16 * baud gives a wrong rate: on the FiberHome SR1041Y the
+console turns to NULs at handover. Add 888, which moves the call after
+the divisor, inside the port lock, as mainline and OpenWrt's econet
+target have it.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ ...airoha-program-XYD-after-the-divisor.patch | 36 +++++++++++++++++++
+ 1 file changed, 36 insertions(+)
+ create mode 100644 target/linux/airoha/patches-6.18/888-serial-8250-airoha-program-XYD-after-the-divisor.patch
+
+diff --git a/target/linux/airoha/patches-6.18/888-serial-8250-airoha-program-XYD-after-the-divisor.patch b/target/linux/airoha/patches-6.18/888-serial-8250-airoha-program-XYD-after-the-divisor.patch
+new file mode 100644
+index 0000000000..dfe452569f
+--- /dev/null
++++ b/target/linux/airoha/patches-6.18/888-serial-8250-airoha-program-XYD-after-the-divisor.patch
+@@ -0,0 +1,36 @@
++Subject: [PATCH] serial: 8250: airoha: program XYD after the divisor
++
++en7523_set_uart_baud_rate() forces BRD to 1 and programs the XYD and
++XINCLKDR registers. Calling it before serial8250_set_divisor() lets the
++generic divisor overwrite BRD, so any uartclk other than 16 * baud gives a
++wrong rate: on the FiberHome SR1041Y (free bootbase, 7.3728 MHz uartclk)
++the console turned to NULs at handover. Call it after the divisor, inside
++the port lock, as mainline Linux and OpenWrt's econet target do.
++
++--- a/drivers/tty/serial/8250/8250_port.c	2026-10-30 18:21:07.240081110 +0800
+++++ b/drivers/tty/serial/8250/8250_port.c	2026-10-30 18:21:07.252731676 +0800
++@@ -2791,12 +2791,6 @@
++ 	baud = serial8250_get_baud_rate(port, termios, old);
++ 	quot = serial8250_get_divisor(port, baud, &frac);
++ 
++-#ifdef CONFIG_SERIAL_8250_AIROHA
++-	/* Airoha SoCs have custom registers for baud rate settings */
++-	if (port->type == PORT_AIROHA)
++-		en7523_set_uart_baud_rate(port, baud);
++-#endif
++-
++ 	/*
++ 	 * Ok, we're now changing the port state. Do it with interrupts disabled.
++ 	 *
++@@ -2813,6 +2807,11 @@
++ 		serial8250_set_ier(port, termios);
++ 		serial8250_set_efr(port, termios);
++ 		serial8250_set_divisor(port, baud, quot, frac);
+++#ifdef CONFIG_SERIAL_8250_AIROHA
+++		/* Airoha SoCs have custom registers for baud rate settings */
+++		if (port->type == PORT_AIROHA)
+++			en7523_set_uart_baud_rate(port, baud);
+++#endif
++ 		serial8250_set_fcr(port, termios);
++ 		/* Consoles manually poll CTS for hardware flow control. */
++ 		if (uart_console(port) &&
+-- 
+2.53.0
+
