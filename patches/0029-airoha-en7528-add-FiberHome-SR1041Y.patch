@@ -1,11 +1,12 @@
-From ed9838a84c6fe5d0f3253a083357f2218b6d3990 Mon Sep 17 00:00:00 2001
+From 316ba709c4758eacbcefa21910a38122b298fa1f Mon Sep 17 00:00:00 2001
 From: HazzPika <188178761+HazzPika@users.noreply.github.com>
 Date: Fri, 30 Oct 2026 23:26:11 +0800
 Subject: [PATCH] airoha: en7528: add FiberHome SR1041Y
 
-GPON ONT + router TM supplies with Unifi in Malaysia: EN7561DU (EN7528
-platform, "free bootbase"), 256 MB, 256 MiB Micron MT29F2G01 SPI-NAND,
-4x GbE, MT7915 DBDC on PCIe, EN7571 xPON with an EN7570 laser driver.
+Wi-Fi 6 router TM supplies with Unifi in Malaysia, behind a separate
+fibre box (ONT): EN7561DU (EN7528 platform, "free bootbase"), 256 MB,
+256 MiB Micron MT29F2G01 SPI-NAND, 4x GbE (port 1 = WAN), MT7915 DBDC
+on PCIe. The SoC has an xPON MAC, but the board has no optics.
 
 - runs from bank B in the stock bank format: kernel trx in UBI volume
   ID 0 (what the bootbase loads), rootfs and rootfs_data alongside;
@@ -13,14 +14,15 @@ platform, "free bootbase"), 256 MB, 256 MiB Micron MT29F2G01 SPI-NAND,
 - sysupgrade into bank B, kernel volume created static with ID 0;
   alphawrt-bootbank with the GN630V interface, flipping the boot flag
   record the bootbase reads from bank A's UBI volumes 3/4
-- MACs and MT7915 calibration from the stock UBIFS "factory" volume on
-  the "config" UBI, attached read-only; mounted in 09_mount_factory_data
-  through that UBI device ("ubi:NAME" only searches ubi0)
+- WAN on port 1 (lan1), LAN on ports 2-4; MACs and MT7915 calibration
+  from the stock UBIFS "factory" volume on the "config" UBI, attached
+  read-only; mounted in 09_mount_factory_data through that UBI device
+  ("ubi:NAME" only searches ubi0)
+- alphawrt.board.fibre=0: AlphaWRT's pages offer router mode only
 - MT7915 on the main PCIe link only: binding through HIF2 (pcie0)
-  resets the SoC
+  resets the SoC; the full wpad, as on the GN630V
 - GbE PHYs enabled (the dtsi disables them); UART clock 7.3728 MHz, as
   the free bootbase leaves the XYD divider set up
-- no GPON yet: xpon, gdm2 and the EN7571 are left disabled
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
@@ -28,13 +30,15 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../airoha/base-files/lib/functions/econet.sh |  14 ++
  .../lib/preinit/09_mount_factory_data         |  20 ++
  .../airoha/dts/en7528_fiberhome_sr1041y.dts   | 176 ++++++++++++++++++
- .../en7528/base-files/etc/board.d/02_network  |   5 +
+ .../en7528/base-files/etc/board.d/02_network  |   9 +
+ .../etc/uci-defaults/05_alphawrt_board        |  20 ++
  .../base-files/lib/preinit/79_sr1041y_factory |  19 ++
  .../en7528/base-files/lib/upgrade/platform.sh |  14 ++
  .../base-files/usr/sbin/alphawrt-bootbank     | 126 +++++++++++++
  target/linux/airoha/image/en7528.mk           |  14 ++
- 9 files changed, 392 insertions(+)
+ 10 files changed, 416 insertions(+)
  create mode 100644 target/linux/airoha/dts/en7528_fiberhome_sr1041y.dts
+ create mode 100755 target/linux/airoha/en7528/base-files/etc/uci-defaults/05_alphawrt_board
  create mode 100644 target/linux/airoha/en7528/base-files/lib/preinit/79_sr1041y_factory
  create mode 100755 target/linux/airoha/en7528/base-files/usr/sbin/alphawrt-bootbank
 
@@ -293,28 +297,58 @@ index 0000000000..0c2cdfbc9a
 +	};
 +};
 diff --git a/target/linux/airoha/en7528/base-files/etc/board.d/02_network b/target/linux/airoha/en7528/base-files/etc/board.d/02_network
-index 7774b3aac4..5bc12c8f15 100644
+index 7774b3aac4..c26e9608e9 100644
 --- a/target/linux/airoha/en7528/base-files/etc/board.d/02_network
 +++ b/target/linux/airoha/en7528/base-files/etc/board.d/02_network
-@@ -10,6 +10,7 @@ econet_setup_interfaces()
- 	dasan,h660gm-a-airtel|\
- 	dasan,h660gm-a-generic|\
- 	econet,en7528-generic|\
-+	fiberhome,sr1041y|\
- 	jiofiber,jcow407|\
+@@ -14,6 +14,10 @@ econet_setup_interfaces()
  	jiofiber,jcow414)
  		ucidef_set_interface_lan "lan1 lan2 lan3 lan4"
-@@ -37,6 +38,10 @@ econet_setup_macs()
+ 		;;
++	fiberhome,sr1041y)
++		# a router, not an ONT: port 1 is the WAN port
++		ucidef_set_interfaces_lan_wan "lan2 lan3 lan4" "lan1"
++		;;
+ 	tplink,xc220-g3v)
+ 		ucidef_set_interface_lan "lan1 lan2 lan3 lan4"
+ 		ucidef_set_interface_wan "pon0" "dhcp"
+@@ -37,6 +41,11 @@ econet_setup_macs()
  		wan_mac="$(get_mac_gs3101)"
  		[ -n "$wan_mac" ] && lan_mac="$(macaddr_add $wan_mac 1)"
  		;;
 +	fiberhome,sr1041y)
 +		lan_mac=$(get_mac_sr1041y brmac)
++		wan_mac=$(get_mac_sr1041y internetmac)
 +		[ -n "$lan_mac" ] && label_mac="$(macaddr_add $lan_mac -1)"
 +		;;
  	huawei,hg2821t-u)
  		local conffile="/tmp/configuration_a/factory.conf"
  		lan_mac=$(get_mac_ascii "$conffile" brmac)
+diff --git a/target/linux/airoha/en7528/base-files/etc/uci-defaults/05_alphawrt_board b/target/linux/airoha/en7528/base-files/etc/uci-defaults/05_alphawrt_board
+new file mode 100755
+index 0000000000..d59a22cadc
+--- /dev/null
++++ b/target/linux/airoha/en7528/base-files/etc/uci-defaults/05_alphawrt_board
+@@ -0,0 +1,20 @@
++#!/bin/sh
++# Boards with no fibre: AlphaWRT's pages offer router mode only, with the
++# Internet on the board's WAN port
++
++. /lib/functions.sh
++
++case "$(board_name)" in
++fiberhome,sr1041y)
++	uci -q batch <<EOF
++set alphawrt.board=board
++set alphawrt.board.fibre=0
++set alphawrt.board.wan_port=lan1
++set alphawrt.setup.mode=router
++set alphawrt.setup.port=lan1
++commit alphawrt
++EOF
++	;;
++esac
++
++exit 0
 diff --git a/target/linux/airoha/en7528/base-files/lib/preinit/79_sr1041y_factory b/target/linux/airoha/en7528/base-files/lib/preinit/79_sr1041y_factory
 new file mode 100644
 index 0000000000..0e306fd46a
