@@ -81,9 +81,10 @@ export default {
 
 		const tick = async () => {
 			await uci.load('network', 'firewall', 'alphawrt');
-			const [ instances, wanStatus, ifDump ] = await Promise.all([
+			/* the WAN address from the dump: no ACL grants network.interface.wan,
+			 * and a denied call ends the session in rpc.js */
+			const [ instances, ifDump ] = await Promise.all([
 				maybe('luci.wireguard', 'getWgInstances'),
-				maybe('network.interface.wan', 'status'),
 				maybe('network.interface', 'dump')
 			]);
 
@@ -92,11 +93,7 @@ export default {
 			const isBridge = mode == 'bridge';
 
 			// Determine external endpoint
-			let wanIp = wanStatus?.ipv4_address?.[0]?.address;
-			if (!wanIp && ifDump?.interface) {
-				const wan = ifDump.interface.find(i => i.interface == 'wan');
-				wanIp = wan?.['ipv4-address']?.[0]?.address;
-			}
+			const wanIp = ifDump?.interface?.find(i => i.interface == 'wan')?.['ipv4-address']?.[0]?.address;
 			let epHost = location.hostname;
 			if (wanIp && !/^192\.168\./.test(wanIp) && !/^10\./.test(wanIp) && !/^172\.(1[6-9]|2\d|3[01])\./.test(wanIp)) {
 				epHost = wanIp;
