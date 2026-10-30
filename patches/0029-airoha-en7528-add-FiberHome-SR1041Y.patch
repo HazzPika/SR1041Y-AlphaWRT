@@ -1,7 +1,7 @@
-From 9f97925f3caee6c51bf821f2139863cd8f4c5ca0 Mon Sep 17 00:00:00 2001
+From ed9838a84c6fe5d0f3253a083357f2218b6d3990 Mon Sep 17 00:00:00 2001
 From: HazzPika <188178761+HazzPika@users.noreply.github.com>
 Date: Fri, 30 Oct 2026 23:26:11 +0800
-Subject: [PATCH 29/29] airoha: en7528: add FiberHome SR1041Y
+Subject: [PATCH] airoha: en7528: add FiberHome SR1041Y
 
 GPON ONT + router TM supplies with Unifi in Malaysia: EN7561DU (EN7528
 platform, "free bootbase"), 256 MB, 256 MiB Micron MT29F2G01 SPI-NAND,
@@ -32,8 +32,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../base-files/lib/preinit/79_sr1041y_factory |  19 ++
  .../en7528/base-files/lib/upgrade/platform.sh |  14 ++
  .../base-files/usr/sbin/alphawrt-bootbank     | 126 +++++++++++++
- target/linux/airoha/image/en7528.mk           |  13 ++
- 9 files changed, 391 insertions(+)
+ target/linux/airoha/image/en7528.mk           |  14 ++
+ 9 files changed, 392 insertions(+)
  create mode 100644 target/linux/airoha/dts/en7528_fiberhome_sr1041y.dts
  create mode 100644 target/linux/airoha/en7528/base-files/lib/preinit/79_sr1041y_factory
  create mode 100755 target/linux/airoha/en7528/base-files/usr/sbin/alphawrt-bootbank
@@ -498,10 +498,10 @@ index 0000000000..009a08db0f
 +	;;
 +esac
 diff --git a/target/linux/airoha/image/en7528.mk b/target/linux/airoha/image/en7528.mk
-index 4b196048fd..cb121b3368 100644
+index 4b196048fd..c871aed3e7 100644
 --- a/target/linux/airoha/image/en7528.mk
 +++ b/target/linux/airoha/image/en7528.mk
-@@ -43,6 +43,19 @@ define Device/tplink_xc220-g3v
+@@ -43,6 +43,20 @@ define Device/tplink_xc220-g3v
  endef
  TARGET_DEVICES += tplink_xc220-g3v
  
@@ -514,7 +514,8 @@ index 4b196048fd..cb121b3368 100644
 +  TRX_LOADADDR := 0x80002000
 +  KERNEL := kernel-bin | append-dtb | tclinux-free-bootbase-jump | lzma | \
 +    kernel-trx
-+  DEVICE_PACKAGES := kmod-usb3 kmod-mt7915e kmod-mt7915-firmware
++  DEVICE_PACKAGES := kmod-usb3 kmod-mt7915e kmod-mt7915-firmware \
++	wpad-mbedtls iw -wpad-basic-mbedtls
 +endef
 +TARGET_DEVICES += fiberhome_sr1041y
 +
