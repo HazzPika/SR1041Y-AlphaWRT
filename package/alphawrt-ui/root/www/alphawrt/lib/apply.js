@@ -33,7 +33,9 @@ export async function save(ops, { rollback = true, timeout = 30, what = 'Saving 
 			else if (op == 'add') await call('uci', 'add', { config, type: section, values: arg, ...(name ? { name } : {}) });
 			else if (op == 'remove') await call('uci', 'delete', { config, section });
 		}
-		await call('uci', 'apply', rollback ? { rollback: true, timeout } : { rollback: false });
+		/* "No data": every value was already what it is set to, nothing to apply */
+		try { await call('uci', 'apply', rollback ? { rollback: true, timeout } : { rollback: false }); }
+		catch (e) { if (/No data/.test(e.message)) return true; throw e; }
 		if (!rollback)
 			return true;
 		/* services restart first; then confirm, or the box rolls back */
