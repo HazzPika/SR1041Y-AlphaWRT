@@ -1,7 +1,7 @@
-From 48d2eff85722c0eb25da8b50fbc79a6cb39b2791 Mon Sep 17 00:00:00 2001
+From 7d20b6215b65c59651bd0fb55dfe492f483c8287 Mon Sep 17 00:00:00 2001
 From: HazzPika <188178761+HazzPika@users.noreply.github.com>
 Date: Fri, 30 Oct 2026 23:26:11 +0800
-Subject: [PATCH] airoha: en7528: add FiberHome SR1041Y
+Subject: [PATCH 29/29] airoha: en7528: add FiberHome SR1041Y
 
 Wi-Fi 6 router TM supplies with Unifi in Malaysia, behind a separate
 fibre box (ONT): EN7561DU (EN7528 platform, "free bootbase"), 256 MB,
@@ -23,8 +23,6 @@ on PCIe. The SoC has an xPON MAC, but the board has no optics.
   resets the SoC; the full wpad, as on the GN630V
 - GbE PHYs enabled (the dtsi disables them); UART clock 7.3728 MHz, as
   the free bootbase leaves the XYD divider set up
-
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  .../etc/hotplug.d/ieee80211/10_fix_wifi_mac   |   4 +
  .../airoha/base-files/lib/functions/econet.sh |  14 +

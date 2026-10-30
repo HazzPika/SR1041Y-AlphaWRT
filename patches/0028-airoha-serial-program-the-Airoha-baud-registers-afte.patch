@@ -1,4 +1,4 @@
-From a4657a62e0f2c635f8e6ffb4ffe97eb402aff721 Mon Sep 17 00:00:00 2001
+From e940b954e1f9ddf9009eb926b15a05592a15c8a7 Mon Sep 17 00:00:00 2001
 From: HazzPika <188178761+HazzPika@users.noreply.github.com>
 Date: Fri, 30 Oct 2026 23:26:11 +0800
 Subject: [PATCH 28/29] airoha: serial: program the Airoha baud registers after
@@ -10,8 +10,6 @@ other than 16 * baud gives a wrong rate: on the FiberHome SR1041Y the
 console turns to NULs at handover. Add 888, which moves the call after
 the divisor, inside the port lock, as mainline and OpenWrt's econet
 target have it.
-
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  ...airoha-program-XYD-after-the-divisor.patch | 36 +++++++++++++++++++
  1 file changed, 36 insertions(+)

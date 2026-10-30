@@ -1,4 +1,4 @@
-From 13ae66fc343490011372008ee2ddfaac470a20fe Mon Sep 17 00:00:00 2001
+From 1406bfdc720949afa4e0752c3cec5638c8c70740 Mon Sep 17 00:00:00 2001
 From: HazzPika <188178761+HazzPika@users.noreply.github.com>
 Date: Fri, 30 Oct 2026 23:26:11 +0800
 Subject: [PATCH 27/29] airoha: en7528: use a raw appended DTB
@@ -10,8 +10,6 @@ RAM-booting such an image panics with "no dtb found". Use
 CONFIG_MIPS_RAW_APPENDED_DTB, as OpenWrt's econet target does. Boards
 booted through a FIT image (XC220-G3V) still get their DTB from the
 bootloader.
-
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  target/linux/airoha/en7528/config-6.18 | 2 +-
  1 file changed, 1 insertion(+), 1 deletion(-)
