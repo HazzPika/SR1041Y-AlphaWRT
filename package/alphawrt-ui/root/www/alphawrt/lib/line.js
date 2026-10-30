@@ -65,6 +65,12 @@ export default {
 		return [ mode, br ? list(br.ports).filter(lan)[0] : lan(wan) ? wan : null ];
 	},
 
+	/* false on a board without fibre (alphawrt.board.fibre = 0, set by the
+	 * board): router mode only, the Internet on the board's WAN port */
+	fibre: function() {
+		return uci.get('alphawrt', 'board', 'fibre') != '0';
+	},
+
 	portName: function(p) {
 		return p ? p.replace(/^lan(\d+)$/, function(m, n) { return fmt('LAN %s', n) }) : '?';
 	},
@@ -188,6 +194,9 @@ export default {
 		    hard = e.hecu + e.lof + e.crc + (ber == null ? e.bip : 0),
 		    light = this.fmtDbm(st.bosa_rx_power_nw), said = this.ispMessage(line),
 		    drops = this.recent(line, /Deactivate_ONU-ID/, 900).length;
+
+		if (mode == 'router' && !this.fibre())
+			return { level: 'ok', title: 'Router', text: 'The Internet comes in on the WAN port.' };
 
 		if (mode == 'router')
 			return { level: 'ok', title: 'Fibre not used',

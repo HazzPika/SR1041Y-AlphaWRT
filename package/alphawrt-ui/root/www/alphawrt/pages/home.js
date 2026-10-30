@@ -160,6 +160,7 @@ export default {
 	},
 
 	fibre(mode, st, v, ln, pon) {
+		if (!line.fibre()) return null;
 		const link = [ 'Fibre details', '#/fibre' ];
 		if (mode == 'router')
 			return card('fibre', 'Fibre', badge('off', 'Not used'), h('p', { class: 'text-sm opacity-70' }, 'In router mode the Internet comes in on a LAN port, so this box’s fibre is idle.'), link);

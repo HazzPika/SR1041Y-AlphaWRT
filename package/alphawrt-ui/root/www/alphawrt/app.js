@@ -24,14 +24,21 @@ const PAGES = [ 'home', 'fibre', 'wifi', 'devices', 'system', 'homelab', 'vpn', 
 const app = document.getElementById('app');
 let timer = null;
 
-function route() { return (location.hash.match(/^#\/([\w-]+)/) || [])[1] || 'home'; }
+/* a board without fibre (alphawrt.board.fibre = 0) has no Fibre page */
+const noFibre = () => uci.get('alphawrt', 'board', 'fibre') == '0';
+const nav = () => NAV.filter(n => n[0] != 'fibre' || !noFibre());
+
+function route() {
+	const page = (location.hash.match(/^#\/([\w-]+)/) || [])[1] || 'home';
+	return page == 'fibre' && noFibre() ? 'home' : page;
+}
 
 function shell(page, main) {
 	const link = ([ id, label, ic ], cls) => h('a', { href: `#/${id}`, class: cls, 'aria-current': id == page ? 'page' : null }, icon(ic), label);
 	return h('div', { class: 'lg:flex' },
 		h('aside', { class: 'hidden lg:flex flex-col w-64 shrink-0 h-dvh sticky top-0 bg-base-100 border-r border-base-300 px-3 py-5' },
 			h('a', { href: '#/home', class: 'px-3 mb-6' }, logo('h-9 w-auto')),
-			h('ul', { class: 'menu w-full gap-1 p-0 text-base' }, NAV.map(n => h('li', {}, link(n, n[0] == page ? 'menu-active' : null)))),
+			h('ul', { class: 'menu w-full gap-1 p-0 text-base' }, nav().map(n => h('li', {}, link(n, n[0] == page ? 'menu-active' : null)))),
 			h('ul', { class: 'menu w-full gap-1 p-0 mt-auto text-base' },
 				h('li', {}, h('a', { href: LUCI }, icon('external'), 'Advanced (LuCI)')),
 				h('li', {}, h('a', { href: '#/logout' }, icon('logout'), 'Log out')))),
@@ -79,7 +86,7 @@ const more = {
 	render(main) {
 		main.append(h('h1', { class: 'text-2xl font-bold' }, 'More'),
 			h('ul', { class: 'menu w-full bg-base-100 rounded-box border border-base-300 text-base' },
-				NAV.filter(n => !DOCK.includes(n[0])).map(([ id, label, ic ]) => h('li', {}, h('a', { href: `#/${id}` }, icon(ic), label))),
+				nav().filter(n => !DOCK.includes(n[0])).map(([ id, label, ic ]) => h('li', {}, h('a', { href: `#/${id}` }, icon(ic), label))),
 				h('li', {}, h('a', { href: LUCI }, icon('external'), 'Advanced settings (LuCI)')),
 				h('li', {}, h('a', { href: '#/logout' }, icon('logout'), 'Log out'))));
 	}

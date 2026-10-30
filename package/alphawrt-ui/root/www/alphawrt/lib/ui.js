@@ -3,6 +3,7 @@
  * logo, and the daisyUI pieces every page uses. Class names are written out
  * whole so ui/build.sh keeps them (see ui/input.css).
  */
+import { uci } from './rpc.js';
 
 export function h(tag, attrs, ...kids) {
 	const el = document.createElement(tag);
@@ -109,7 +110,8 @@ export function fmtTime(s) {
 	return d ? `${d} d ${hr} h` : hr ? `${hr} h ${m} min` : `${m} min`;
 }
 
-export function portName(p) { return p ? p.replace(/^lan(\d+)$/, 'LAN $1') : '?'; }
+/* "LAN 2", or "WAN" for the WAN port of a board without fibre */
+export function portName(p) { return !p ? '?' : p == uci.get('alphawrt', 'board', 'wan_port') ? 'WAN' : p.replace(/^lan(\d+)$/, 'LAN $1'); }
 
 /* --- forms and dialogs --- */
 

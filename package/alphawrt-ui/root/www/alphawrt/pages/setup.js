@@ -8,7 +8,7 @@
  * moves with the new mode, the box undoes the change and the page offers to
  * apply without the check and names the address to open, as LuCI did.
  */
-import { h, icon, rows, field, toggle, choice, modal, busy, toast } from '../lib/ui.js';
+import { h, icon, rows, field, toggle, choice, modal, busy, toast, portName } from '../lib/ui.js';
 import { call, maybe, uci, list } from '../lib/rpc.js';
 import { save } from '../lib/apply.js';
 import line from '../lib/line.js';
@@ -68,17 +68,19 @@ const STEPS = {
 	welcome: {
 		rail: 'Welcome',
 		body: () => [
-			h('h1', { class: 'text-3xl font-bold leading-tight' }, first ? 'Let’s set up your fibre box' : 'Quick Setup'),
+			h('h1', { class: 'text-3xl font-bold leading-tight' }, first ? (line.fibre() ? 'Let’s set up your fibre box' : 'Let’s set up your router') : 'Quick Setup'),
 			h('p', { class: 'mt-3 opacity-80' }, first ? 'About 5 minutes. Have these ready:' : 'Change how the box connects. Have these ready:'),
 			h('ul', { class: 'mt-4 space-y-3' }, [
 				[ 'key', 'Your Internet login', 'The PPPoE username and password from your provider’s welcome email or self-care portal.' ],
-				[ 'fibre', 'Your old fibre box', 'Its serial number (“GPON SN”) and PLOAM password, from its label or status page.' ],
+				line.fibre() && [ 'fibre', 'Your old fibre box', 'Its serial number (“GPON SN”) and PLOAM password, from its label or status page.' ],
 				[ 'wifi', 'A Wi-Fi name and password', 'Keep your old ones and your devices reconnect by themselves.' ]
-			].map(([ ic, t, x ]) => h('li', { class: 'flex gap-3' },
+			].filter(Boolean).map(([ ic, t, x ]) => h('li', { class: 'flex gap-3' },
 				h('span', { class: 'grid place-items-center size-9 shrink-0 rounded-full bg-base-100 text-primary' }, icon(ic)),
 				h('span', {}, h('b', {}, t), h('span', { class: 'block text-sm opacity-70' }, x))))),
-			note('alert-warning', 'warn', [ h('b', {}, 'Don’t plug in the fibre yet. '),
+			line.fibre() ? note('alert-warning', 'warn', [ h('b', {}, 'Don’t plug in the fibre yet. '),
 				'The box saves its identity first, so your provider never sees an unknown box. Repeated unknown boxes can get a serial number blocked.' ])
+				: note('alert-info', 'warn', [ h('b', {}, 'Plug your provider’s fibre box or modem into the WAN port. '),
+					'The other ports and Wi-Fi are your home network.' ])
 		]
 	},
 
@@ -105,6 +107,8 @@ const STEPS = {
 	mode: {
 		rail: 'How you’ll use it',
 		title: 'How will you use this box?',
+		/* without fibre the box is a router, nothing to choose */
+		skip: () => !line.fibre(),
 		body: () => h('div', { class: 'space-y-3' },
 			card('mode', 'combo', MODES.combo, 'The fibre goes into this box and it does everything: Internet login, Wi-Fi and your home network. It replaces your provider’s box.',
 				h('span', { class: 'badge badge-soft badge-primary badge-sm' }, 'Most people')),
@@ -162,7 +166,7 @@ const STEPS = {
 
 	isp: {
 		rail: 'Provider',
-		title: 'Who is your fibre provider?',
+		title: () => line.fibre() ? 'Who is your fibre provider?' : 'Who is your Internet provider?',
 		lead: () => 'This only fills in the usual settings. You can change them on the next screens.',
 		body: () => h('div', { class: 'space-y-3' }, presets.map(p => card('isp', p.id, p.name,
 			p.id == 'other' ? 'Maxis, CelcomDigi and others: you enter the settings.'
@@ -236,8 +240,9 @@ const STEPS = {
 					note('alert-info', 'warn', 'Your router does the Internet login (PPPoE) with the username and password from your provider.')
 				];
 			return [
-				d.mode == 'router' && [ pick('Plug your provider’s fibre box into', 'port', PORTS),
+				d.mode == 'router' && line.fibre() && [ pick('Plug your provider’s fibre box into', 'port', PORTS),
 					h('p', { class: 'text-xs opacity-70 mt-1 mb-3' }, 'Not the port your computer is on.') ],
+				!line.fibre() && h('p', { class: 'text-sm opacity-70 mb-3' }, 'Your provider’s fibre box or modem goes into the WAN port.'),
 				h('div', { class: 'grid grid-cols-2 gap-2 mb-2' }, card('proto', 'pppoe', 'PPPoE', 'Username and password'), card('proto', 'dhcp', 'Automatic', 'No login (DHCP)')),
 				d.proto == 'pppoe' && [
 					text('PPPoE username', 'username', { placeholder: 'name@unifi', autocomplete: 'username', hint: 'From your provider’s welcome email or self-care portal.' }),
@@ -247,7 +252,9 @@ const STEPS = {
 					`For a TV box. LAN 4 then carries the provider’s IPTV VLAN (${d.iptv_vlan}) only; the other ports and Wi-Fi stay on the Internet. Leave off if you have no TV box.`)),
 				h('details', { class: 'collapse collapse-arrow bg-base-100 border border-base-300 mt-4' },
 					h('summary', { class: 'collapse-title text-sm font-medium' }, `VLAN: ${d.vlan || 'none'}${p.vlan && d.vlan == String(p.vlan) ? ` (from ${p.name})` : ''}`),
-					h('div', { class: 'collapse-content' }, text('Internet VLAN', 'vlan', { hint: d.mode == 'router'
+					h('div', { class: 'collapse-content' }, text('Internet VLAN', 'vlan', { hint: !line.fibre()
+						? 'Filled in from the provider (Unifi: 500). Empty only if your provider’s box sends the Internet untagged.'
+						: d.mode == 'router'
 						? 'Usually empty: the provider’s box sends the Internet untagged. Only set it if your provider says so.'
 						: 'Once the fibre registers, the VLAN your provider’s equipment sends replaces this.' })))
 			];
@@ -312,10 +319,10 @@ const STEPS = {
 			const wifi = d.mode == 'bridge' && !d.wifi_keep ? 'Off (your router does Wi-Fi)' : d.same ? (d.ssid0 || '—') : `${d.ssid0 || '—'} / ${d.ssid1 || '—'}`;
 			return [
 				h('div', { class: 'card bg-base-100 border border-base-300' }, h('div', { class: 'card-body p-5' }, rows([
-					[ 'Use', MODES[d.mode] ],
+					line.fibre() && [ 'Use', MODES[d.mode] ],
 					[ 'Provider', p?.name || '—' ],
 					d.mode != 'router' && [ 'Serial number', d.serial || '—' ],
-					d.mode != 'combo' && [ d.mode == 'bridge' ? 'Your router on' : 'Provider’s box on', d.port.replace(/^lan/, 'LAN ') ],
+					d.mode != 'combo' && [ d.mode == 'bridge' ? 'Your router on' : 'Provider’s box on', portName(d.port) ],
 					d.mode == 'combo' && d.iptv && [ 'IPTV', `LAN 4 · VLAN ${d.iptv_vlan}` ],
 					d.mode != 'bridge' && [ 'Internet', d.proto == 'pppoe' ? `PPPoE as ${d.username}` : 'Automatic' ],
 					[ 'VLAN', d.mode == 'bridge' && d.trunk ? 'All, passed to your router' : d.vlan || 'none' ],
@@ -499,7 +506,7 @@ function draw() {
 		return root.replaceChildren(h('div', { class: 'text-center py-12' },
 			h('span', { class: 'inline-grid place-items-center size-20 rounded-full bg-base-100 text-success' }, icon('ok', 'size-10')),
 			h('h1', { class: 'text-2xl font-bold mt-6' }, 'All set'),
-			h('p', { class: 'opacity-70 mt-2' }, d.mode == 'bridge' ? `Plug your router into ${d.port.replace(/^lan/, 'LAN ')}. This box stays reachable at ${newAddress()}.` : 'Home shows whether the fibre and the Internet are up.'),
+			h('p', { class: 'opacity-70 mt-2' }, d.mode == 'bridge' ? `Plug your router into ${d.port.replace(/^lan/, 'LAN ')}. This box stays reachable at ${newAddress()}.` : line.fibre() ? 'Home shows whether the fibre and the Internet are up.' : 'Home shows whether the Internet is up.'),
 			h('a', { href: '#/home', class: 'btn btn-primary mt-8' }, 'Go to Home', icon('chevron', 'size-4'))));
 
 	const steps = visible(), i = steps.indexOf(cur), s = STEPS[cur], n = steps.length - 1;
@@ -578,6 +585,8 @@ export default {
 				if (v && s.name == 'br-iptv') Object.assign(d, { iptv: true, iptv_vlan: v[1] });
 				else if (v && !d.vlan) d.vlan = v[1];
 			}
+		/* without fibre: router mode on the board's WAN port, always */
+		if (!line.fibre()) Object.assign(d, { mode: 'router', port: uci.get('alphawrt', 'board', 'wan_port') || 'lan1' });
 		const p = preset();
 		if (!d.vlan && p?.vlan) d.vlan = String(p.vlan);
 		if (!d.iptv_vlan && p?.iptv_vlan) d.iptv_vlan = String(p.iptv_vlan);

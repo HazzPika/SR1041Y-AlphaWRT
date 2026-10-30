@@ -36,6 +36,10 @@ return baseclass.extend({
 	render: function(data) {
 		var st = data[0] || {}, o = this.optics, table, fields, nodes = [];
 
+		/* a board without fibre: no section at all */
+		if (uci.get('alphawrt', 'board', 'fibre') == '0')
+			return null;
+
 		[ 'bosa_rx_power_nw', 'bosa_tx_power_nw', 'bosa_temperature_mc', 'bosa_bias_ua' ].forEach(function(k) {
 			if (st[k] != null)
 				o[k] = st[k];
