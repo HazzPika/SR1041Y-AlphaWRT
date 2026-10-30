@@ -203,7 +203,11 @@ status() {
 		json_add_array widths
 		json_add_int "" 20
 		json_add_int "" 40
-		[ $band = 5g ] && { json_add_int "" 80; json_add_int "" 160; }
+		# 160 MHz only where the radio has it: an MT7915 running both bands
+		# (DBDC) stops at 80, and hostapd then fails to start the 5 GHz AP
+		[ $band = 5g ] && { json_add_int "" 80
+			ubus call iwinfo info "{\"device\":\"$radio\"}" 2>/dev/null |
+				jsonfilter -e '@.htmodes[*]' | grep -qx 'V\?HE160\|VHT160' && json_add_int "" 160; }
 		json_close_array
 		add_channels "$radio" $band
 		[ -n "$ch" ] && json_add_int channel "$ch"
