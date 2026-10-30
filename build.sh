@@ -6,6 +6,8 @@
 # case-sensitive filesystem (see README.md).
 #
 #   ./build.sh [openwrt-dir]      default: ./openwrt
+#   DEVICE=sr1041y ./build.sh     build config/$DEVICE.config instead of the
+#                                 GN630V (FiberHome SR1041Y: docs/SR1041Y.md)
 #
 # Images end up in <openwrt-dir>/bin/targets/airoha/en7523/:
 #   *-squashfs-tclinux-factory.bin   install from the stock web UI
@@ -19,6 +21,8 @@ MAIN=e4974473dbae690a48c9b5fe72b5adeaf26dc70b
 TREE=https://github.com/Sirherobrine23/openwrt.git
 HERE=$(cd "$(dirname "$0")" && pwd)
 DIR=${1:-openwrt}
+DEVICE=${DEVICE:-gn630v}
+[ -f "$HERE/config/$DEVICE.config" ] || { echo "no config/$DEVICE.config" >&2; exit 1; }
 
 [ -d "$DIR/.git" ] || git clone "$TREE" "$DIR"
 cd "$DIR"
@@ -44,7 +48,7 @@ cp "$HERE/config/feeds.conf" feeds.conf
 	prometheus-node-exporter-lua iperf3 etherwake miniupnpd luci-app-upnp \
 	ddns-scripts luci-app-ddns htop
 
-cp "$HERE/config/gn630v.config" .config
+cp "$HERE/config/$DEVICE.config" .config
 # bridger's BPF program is built with the host clang/llc: on macOS that is
 # Homebrew's llvm, which isn't on PATH (on Linux, the distribution's clang
 # and llvm packages are)
@@ -53,8 +57,15 @@ if [ "$(uname)" = Darwin ]; then
 	# the host golang-bootstrap doesn't build on macOS: use Homebrew's Go
 	echo "CONFIG_GOLANG_EXTERNAL_BOOTSTRAP_ROOT=\"$(brew --prefix go)/libexec\"" >> .config
 	echo "# CONFIG_GOLANG_BUILD_BOOTSTRAP is not set" >> .config
+elif [ "$(uname -m)" = aarch64 ]; then
+	# golang-bootstrap can't build on linux/arm64 either: use the
+	# distribution's Go (e.g. Debian/Ubuntu golang-go)
+	echo "CONFIG_GOLANG_EXTERNAL_BOOTSTRAP_ROOT=\"$(go env GOROOT)\"" >> .config
+	echo "# CONFIG_GOLANG_BUILD_BOOTSTRAP is not set" >> .config
 fi
 make defconfig
 make -j"$(getconf _NPROCESSORS_ONLN)"
 # flash budget: kernel, rootfs and package sizes against the 0.3.0 base
-python3 "$HERE/tools/budget.py" .
+# (the report reads the GN630V factory image layout)
+[ "$DEVICE" = gn630v ] && python3 "$HERE/tools/budget.py" .
+exit 0
