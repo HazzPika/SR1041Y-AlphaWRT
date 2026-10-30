@@ -94,12 +94,14 @@ export default {
 			st.bosa_rx_power_nw = rx;
 
 			const wan = ifaces.find(i => i.interface == 'wan'), wanUp = !!wan?.up, registered = st.state == 5;
+			/* a phone on the USB port (usbwan) carries the Internet while the WAN is down */
+			const usb = ifaces.find(i => i.interface == 'usbwan'), phone = !wanUp && usb?.up ? usb : null;
 			const v = line.verdict(st, ln, mode, wanUp);
 
 			await u.tick();
-			banner.replaceChildren(this.banner(v, mode, port, dev, wan, wanUp));
+			banner.replaceChildren(this.banner(v, mode, port, dev, wan, wanUp, phone));
 			cards.replaceChildren(...[
-				this.internet(mode, port, dev, wan, wanUp, registered, ln, isp, pon),
+				this.internet(mode, port, dev, wan, wanUp, registered, ln, isp, pon, phone),
 				this.fibre(mode, st, v, ln, pon),
 				this.wifi(mode, wifiIfaces, assoc),
 				this.devices(mode, port, leases, wifiMacs),
@@ -112,10 +114,12 @@ export default {
 		return tick;
 	},
 
-	banner(v, mode, port, dev, wan, wanUp) {
+	banner(v, mode, port, dev, wan, wanUp, phone) {
 		const fix = h('a', { href: SETUP, class: 'btn btn-sm btn-warning mt-2' }, 'Open Quick Setup');
 		if (v.level != 'ok')
 			return alert(v.level, v.title, v.text, /login|serial|ISP has not accepted/i.test(v.title + v.text) ? fix : null);
+		if (phone && mode != 'bridge')
+			return alert('ok', 'Internet through your phone', `The phone on the USB port carries the Internet. Connected for ${fmtTime(phone.uptime || 0)}.`);
 		if (mode == 'bridge')
 			return dev.carrier
 				? alert('ok', 'Fibre OK, passing through to your router', `Your own router on ${portName(port)} connects to the Internet. Its own page shows the Internet address.`)
@@ -125,8 +129,16 @@ export default {
 		return alert('ok', 'Everything’s working', `${v.text} Internet connected for ${fmtTime(wan.uptime)}.`);
 	},
 
-	internet(mode, port, dev, wan, wanUp, registered, ln, isp, pon) {
+	internet(mode, port, dev, wan, wanUp, registered, ln, isp, pon, phone) {
 		const link = [ 'Change setup', SETUP ];
+		if (phone && mode != 'bridge')
+			return card('globe', 'Internet', badge('ok', 'Through your phone'), rows([
+				[ 'Connection', 'Phone on the USB port' ],
+				[ 'Internet address', phone['ipv4-address']?.[0]?.address || '—' ],
+				[ 'DNS', dnsServers(phone) ],
+				[ 'Connected for', fmtTime(phone.uptime || 0) ],
+				[ 'Main Internet', 'Not connected' ]
+			]), [ 'Phone settings', '#/tether' ]);
 		if (mode == 'bridge')
 			return card('globe', 'Internet',
 				!registered ? badge('bad', 'Waiting for fibre') : dev.carrier ? badge('ok', 'Passing through') : badge('warn', 'No router'),

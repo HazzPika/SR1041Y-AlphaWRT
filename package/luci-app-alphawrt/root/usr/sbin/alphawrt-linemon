@@ -222,6 +222,9 @@ while :; do
 		led red:los off
 	fi
 	l3=$([ "$w" = true ] && [ "$mode" != bridge ] && ifstatus wan | jsonfilter -e @.l3_device)
+	# without the WAN, the USB tethering WAN (a phone) if it is up
+	[ -n "$l3" ] || [ "$mode" = bridge ] || [ "$(ifstatus usbwan 2>/dev/null | jsonfilter -e @.up)" != true ] ||
+		l3=$(ifstatus usbwan | jsonfilter -e @.l3_device)
 	[ -n "$l3" ] && led green:internet dev:$l3 || led green:internet off
 
 	if [ $((n % 30)) = 0 ]; then

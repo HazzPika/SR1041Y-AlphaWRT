@@ -15,6 +15,10 @@
 #   cpu             {"cpu": [[busy, total], ...]} in jiffies from /proc/stat:
 #                   index 0 all cores, then one per core; busy = total - idle
 #                   - iowait. Callers diff two samples. Shared with the Simple UI.
+#   tether          the phone or USB modem sharing its Internet over USB:
+#                   "device" (its netdev, which usbwan uses), "kind"
+#                   (iphone|android|usb), "product"; "supported" when the
+#                   image has a USB tethering driver
 
 . /lib/functions.sh
 . /usr/share/libubox/jshn.sh
@@ -161,9 +165,34 @@ cpu() {
 		END { print "] }" }' /proc/stat
 }
 
+tether() {
+	local n drv kind dev product
+
+	json_init
+	for n in /sys/class/net/*; do
+		drv=$(basename "$(readlink "$n/device/driver" 2>/dev/null)")
+		case "$drv" in
+		ipheth) kind=iphone ;;
+		rndis_host|cdc_ncm) kind=android ;;
+		cdc_ether) kind=usb ;;
+		*) continue ;;
+		esac
+		dev=${n##*/}
+		# $n/device is the USB interface: the product name is on its parent
+		product=$(cat "$n/device/../product" 2>/dev/null)
+		break
+	done
+	json_add_boolean supported "$(ls -d /sys/bus/usb/drivers/ipheth /sys/bus/usb/drivers/rndis_host \
+		/sys/bus/usb/drivers/cdc_ncm 2>/dev/null | grep -q . && echo 1 || echo 0)"
+	json_add_string device "$dev"
+	json_add_string kind "$kind"
+	json_add_string product "$product"
+	json_dump
+}
+
 case "$1" in
 list)
-	echo '{ "presets": {}, "stock_identity": {}, "banks": {}, "set_bank": { "bank": "a" }, "pon_info": {}, "line": {}, "cpu": {},
+	echo '{ "presets": {}, "stock_identity": {}, "banks": {}, "set_bank": { "bank": "a" }, "pon_info": {}, "line": {}, "cpu": {}, "tether": {},
 		"set_identity": { "serial": "", "password": "", "equipment_id": "", "hardware_version": "",
 			"software_version_0": "", "software_version_1": "", "omcc_version": "",
 			"traffic_management_option": "", "olt_profile": "" } }'
@@ -183,7 +212,7 @@ call)
 	set_bank)
 		set_bank
 		;;
-	pon_info|set_identity|line|cpu)
+	pon_info|set_identity|line|cpu|tether)
 		$2
 		;;
 	esac

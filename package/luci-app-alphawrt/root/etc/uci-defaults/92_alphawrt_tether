@@ -1,0 +1,30 @@
+#!/bin/sh
+# USB tethering: a phone or USB modem plugged into the USB port is a second
+# WAN, usbwan, in the wan firewall zone. By default a backup: its metric (20)
+# keeps the main WAN's default route first, so it carries the traffic only
+# while the WAN is down. The Mobile page changes the mode;
+# hotplug.d/net/40-alphawrt-tether points usbwan at the phone's netdev.
+
+uci -q get alphawrt.tether >/dev/null || uci -q batch <<EOF
+set alphawrt.tether=tether
+set alphawrt.tether.mode=backup
+commit alphawrt
+EOF
+
+uci -q get network.usbwan >/dev/null && exit 0
+
+uci -q batch <<EOF
+set network.usbwan=interface
+set network.usbwan.proto=dhcp
+set network.usbwan.device=usb0
+set network.usbwan.metric=20
+commit network
+EOF
+
+zone=$(uci show firewall | sed -n "s/^firewall\.\([^.]*\)\.name='wan'$/\1/p" | head -n 1)
+if [ -n "$zone" ]; then
+	uci add_list firewall.$zone.network=usbwan
+	uci commit firewall
+fi
+
+exit 0

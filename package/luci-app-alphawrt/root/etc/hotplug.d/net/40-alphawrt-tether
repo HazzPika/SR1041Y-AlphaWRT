@@ -1,0 +1,18 @@
+#!/bin/sh
+# A phone (iPhone: ipheth, Android: RNDIS or NCM) or a USB modem shares its
+# Internet over USB: point the usbwan interface at its netdev. iPhones come
+# up as ethN, Android phones as usbN, so the name isn't known in advance.
+
+[ "$ACTION" = add ] || exit 0
+
+case "$(basename "$(readlink "/sys/class/net/$INTERFACE/device/driver" 2>/dev/null)")" in
+ipheth|rndis_host|cdc_ncm|cdc_ether) ;;
+*) exit 0 ;;
+esac
+
+uci -q get network.usbwan >/dev/null || exit 0
+[ "$(uci -q get network.usbwan.device)" = "$INTERFACE" ] && exit 0
+
+uci set network.usbwan.device="$INTERFACE"
+uci commit network
+/etc/init.d/network reload
