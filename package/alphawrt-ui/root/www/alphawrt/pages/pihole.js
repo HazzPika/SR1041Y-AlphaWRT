@@ -25,7 +25,7 @@ export default {
 		main.append(h('div', { class: 'flex flex-wrap items-center justify-between gap-3' },
 			h('h1', { class: 'text-2xl font-bold' }, 'Pi-hole'),
 			pi?.web_installed && h('a', { href: `${location.protocol}//${location.hostname}:${pi.admin_port || 8080}${pi.admin_path || '/admin/'}`,
-				target: '_blank', rel: 'noopener', class: 'btn btn-sm btn-primary' }, 'Open Pi-hole admin', icon('external', 'size-4'))));
+				target: '_blank', rel: 'noopener', class: 'btn btn-sm btn-outline btn-primary' }, 'Open Pi-hole admin', icon('external', 'size-4'))));
 		if (!pi) return main.append(h('p', { class: 'text-sm opacity-70' }, 'Pi-hole isn’t in this build.'));
 		main.append(h('div', { class: 'grid gap-4 lg:grid-cols-2 items-start' },
 			pi.enabled && pi.running ? this.today(stats) : null,
@@ -62,6 +62,7 @@ export default {
 		const presetSel = choice('Block list preset', presetOptions, pi.preset || 'multi');
 		const tifTog = toggle('Threat intelligence', pi.tif, 'Block known malware and phishing domains (Hagezi TIF)');
 		const enTog = toggle('Enable ad blocking', pi.enabled, 'Filter ads and trackers for all devices on your network');
+		const strictTog = toggle('Stop devices skipping Pi-hole', pi.strict, 'Also blocks encrypted DNS (DNS over TLS, and the well-known DNS over HTTPS servers). Devices set to strict encrypted DNS, such as Android Private DNS with a hostname, lose internet while this is on.');
 
 		const gw = uci.get('network', 'gnmgmt', 'gateway') || '';
 		const gwField = bridge && field('Your router’s address', { value: gw, placeholder: '192.168.100.2',
@@ -74,13 +75,13 @@ export default {
 		let pauseCtl = null;
 		if (pi.enabled && pi.running) {
 			if (pi.blocking == 'enabled') {
-				pauseCtl = h('div', { class: 'space-y-1.5' },
-					h('div', { class: 'text-xs font-medium opacity-70' }, 'Temporarily pause blocking:'),
-					h('div', { class: 'flex flex-wrap gap-2' },
+				pauseCtl = h('div', { class: 'flex flex-wrap items-center justify-between gap-2' },
+					h('span', { class: 'text-sm opacity-70' }, 'Pause blocking'),
+					h('div', { class: 'join' },
 						[ [ 5, '5 min' ], [ 15, '15 min' ], [ 60, '1 hour' ] ].map(([ m, lbl ]) =>
 							h('button', {
 								type: 'button',
-								class: 'btn btn-xs btn-outline',
+								class: 'btn btn-sm join-item',
 								onclick: async () => {
 									const r = await call('alphawrt-pihole', 'pause', { minutes: m }).catch(e => ({ error: e.message }));
 									if (r.error) return toast('bad', r.error);
@@ -89,10 +90,8 @@ export default {
 								}
 							}, lbl))));
 			} else if (pi.blocking == 'disabled') {
-				pauseCtl = h('div', { class: 'flex items-center justify-between gap-3 p-3 bg-warning/10 rounded-box border border-warning/20' },
-					h('div', { class: 'text-sm' },
-						h('div', { class: 'font-semibold' }, 'Blocking is paused'),
-						pi.timer > 0 && h('div', { class: 'text-xs opacity-70' }, `${fmtTime(pi.timer)} remaining`)),
+				pauseCtl = h('div', { class: 'flex flex-wrap items-center justify-between gap-2' },
+					h('span', { class: 'text-sm opacity-70' }, 'Blocking is paused'),
 					h('button', {
 						type: 'button',
 						class: 'btn btn-sm btn-primary',
@@ -108,7 +107,7 @@ export default {
 
 		const statsRows = pi.enabled ? rows([
 			pi.domains ? [ 'Domains blocked', Number(pi.domains).toLocaleString() ] : null,
-			pi.last_update ? [ 'Last updated', new Date(pi.last_update * 1000).toLocaleString() ] : null,
+			pi.last_update ? [ 'Last updated', new Date(pi.last_update * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) ] : null,
 			pi.timer > 0 ? [ 'Pause timer', fmtTime(pi.timer) ] : null
 		]) : null;
 
@@ -120,6 +119,7 @@ export default {
 				const enabled = enTog.input.checked;
 				const preset = presetSel.input.value;
 				const tif = tifTog.input.checked;
+				const strict = strictTog.input.checked;
 				const pw = pwField?.input?.value?.trim() || null;
 				const newGw = gwField?.input?.value?.trim() || '';
 				if (gwField && enabled && gwError(newGw)) {
@@ -138,7 +138,7 @@ export default {
 					saveBtn.disabled = false;
 					return;
 				}
-				const r = await call('alphawrt-pihole', 'set', pw ? { enabled, preset, tif, password: pw } : { enabled, preset, tif }).catch(e => ({ error: e.message }));
+				const r = await call('alphawrt-pihole', 'set', pw ? { enabled, preset, tif, strict, password: pw } : { enabled, preset, tif, strict }).catch(e => ({ error: e.message }));
 				saveBtn.disabled = false;
 				if (r.error) {
 					const msgs = {
@@ -178,6 +178,7 @@ export default {
 				enTog,
 				presetSel,
 				tifTog,
+				strictTog,
 				gwField,
 				pwField),
 			h('div', { class: 'flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-base-300' },

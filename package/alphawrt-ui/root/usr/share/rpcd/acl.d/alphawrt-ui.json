@@ -5,6 +5,7 @@
 			"ubus": {
 				"alphawrt": [
 					"banks",
+					"wan_mode",
 					"presets",
 					"stock_identity",
 					"pon_info",
@@ -18,7 +19,9 @@
 				],
 				"luci-rpc": [
 					"getDHCPLeases",
-					"getHostHints"
+					"getHostHints",
+					"getNetworkDevices",
+					"getWirelessDevices"
 				],
 				"network.device": [
 					"status"
@@ -57,6 +60,9 @@
 				],
 				"luci.wireguard": [
 					"getWgInstances"
+				],
+				"tailscale": [
+					"get_status"
 				]
 			},
 			"uci": [
@@ -69,6 +75,7 @@
 				"firewall",
 				"system",
 				"omci",
+				"xpon",
 				"pihole"
 			],
 			"cgi-io": [
@@ -133,6 +140,7 @@
 				],
 				"alphawrt": [
 					"set_bank",
+					"set_wan_mode",
 					"set_identity"
 				],
 				"alphawrt.wifi": [
@@ -153,10 +161,15 @@
 					"generateKeyPair",
 					"getPublicAndPrivateKeyFromPrivate",
 					"generatePsk"
+				],
+				"tailscale": [
+					"do_login",
+					"do_logout"
 				]
 			},
 			"uci": [
 				"dhcp",
+				"dnsproxy",
 				"wireless",
 				"usteer",
 				"firewall",

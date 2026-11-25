@@ -11,13 +11,16 @@ import { usage } from '../lib/stats.js';
 const PON_STATES = [ null, 'Initial', 'Standby', 'Serial number', 'Ranging', 'Registered', 'Signal lost', 'Stopped by the ISP' ];
 const MODES = { combo: 'Combo (fibre and router)', bridge: 'Bridge (fibre only)', router: 'Router' };
 const SETUP = '#/setup';
+const setupLink = () => h('a', { href: SETUP, class: 'btn btn-sm btn-warning mt-2' }, 'Open Quick Setup');
 
 /* dnsmasq forwarding to dnsproxy means encrypted DNS: name its upstreams */
 function dnsServers(wan) {
 	const port = uci.get('dnsproxy', 'global', 'listen_port');
 	if (uci.get('dnsproxy', 'global', 'enabled') == '1' && list(uci.get('dhcp', '@dnsmasq[0]', 'server')).includes(`127.0.0.1#${port}`))
-		return 'Encrypted via ' + list(uci.get('dnsproxy', 'servers', 'upstream')).map(u => u.replace(/^\w+:\/\/|\/.*$/g, '')).join(', ');
-	return (wan?.['dns-server'] || []).join(', ') || '—';
+		return 'Encrypted: ' + list(uci.get('dnsproxy', 'servers', 'upstream')).map(u => u.replace(/^\w+:\/\/|\/.*$/g, '')
+			.replace(/^unfiltered\.adguard-dns\.com$/, 'AdGuard (no blocking)').replace(/^cloudflare-dns\.com$/, 'Cloudflare')).join(', ');
+	const own = list(uci.get('dhcp', '@dnsmasq[0]', 'server'));
+	return (own.length ? own : wan?.['dns-server'] || []).join(', ') || '—';
 }
 
 /* combo mode's IPTV port: br-iptv = lan4 + pon0.<vlan> (Quick Setup) */
@@ -42,6 +45,14 @@ function rxMeter(nw, thr) {
 
 const fmtDbm = nw => { const d = line.dbm(nw); return d == null ? 'No light' : `${d < 0 ? '−' : '+'}${Math.abs(d).toFixed(1)} dBm`; };
 
+/* "Wi-Fi 7 · Channel 36 · 80 MHz · 20 dBm · WPA2/3" from iwinfo */
+function radioLine(r) {
+	if (!r?.channel) return '';
+	const gen = { be: 'Wi-Fi 7', ax: 'Wi-Fi 6', ac: 'Wi-Fi 5', n: 'Wi-Fi 4' }[r.hwmode], mhz = /(\d+)$/.exec(r.htmode || '')?.[1],
+		wpa = r.encryption?.wpa || [];
+	return [ gen, `Channel ${r.channel}`, mhz && `${mhz} MHz`, r.txpower != null && `${r.txpower} dBm`, wpa.length ? `WPA${wpa.join('/')}` : 'Open' ].filter(Boolean).join(' · ');
+}
+
 export default {
 	title: 'Home',
 
@@ -56,7 +67,7 @@ export default {
 		const isp = presets.find(p => p.id == uci.get('alphawrt', 'setup', 'isp'));
 		let rx = null;
 
-		const banner = h('div'), cards = h('div', { class: 'grid gap-4 lg:grid-cols-2' });
+		const banner = h('div', { class: 'space-y-4' }), cards = h('div', { class: 'grid gap-4 lg:grid-cols-2' });
 		/* uptime is already in This box */
 		const u = usage([], { uptime: false });
 		main.append(
@@ -73,7 +84,7 @@ export default {
 				line.load(),
 				maybe('network.interface', 'dump').then(r => r.interface || []),
 				maybe('luci-rpc', 'getDHCPLeases', { family: 4 }).then(r => r.dhcp_leases || []),
-				maybe('network.wireless', 'status'),
+				maybe('luci-rpc', 'getWirelessDevices'),
 				maybe('system', 'info'),
 				maybe('alphawrt', 'pon_info'),
 				port ? maybe('network.device', 'status', { name: port }) : {},
@@ -87,6 +98,7 @@ export default {
 					if (i.ifname) ifname[i.section] = i.ifname;
 			const assoc = await Promise.all(wifiIfaces.map(w => ifname[w['.name']]
 				? maybe('iwinfo', 'assoclist', { device: ifname[w['.name']] }).then(r => r.results || []) : []));
+			const radios = await Promise.all(wifiIfaces.map(w => ifname[w['.name']] ? maybe('iwinfo', 'info', { device: ifname[w['.name']] }) : {}));
 			const wifiMacs = new Set(assoc.flat().map(a => a.mac.toLowerCase()));
 
 			/* telemetry can be missing in a single poll: keep the last reading */
@@ -99,11 +111,12 @@ export default {
 			const v = line.verdict(st, ln, mode, wanUp);
 
 			await u.tick();
-			banner.replaceChildren(this.banner(v, mode, port, dev, wan, wanUp, phone));
+			const sn = line.serialWarning(pon, mode);
+			banner.replaceChildren(this.banner(v, mode, port, dev, wan, wanUp, phone), sn ? alert('warn', sn.title, sn.text, setupLink()) : '');
 			cards.replaceChildren(...[
 				this.internet(mode, port, dev, wan, wanUp, registered, ln, isp, pon, phone),
-				this.fibre(mode, st, v, ln, pon),
-				this.wifi(mode, wifiIfaces, assoc),
+				mode != 'router' && this.fibre(mode, st, v, ln, pon),
+				this.wifi(mode, wifiIfaces, assoc, radios),
 				this.devices(mode, port, leases, wifiMacs),
 				this.adblock(mode, pi, piPresets?.presets || [], tick),
 				card('system', 'CPU and memory', null, u.el, [ 'System', '#/system' ]),
@@ -115,7 +128,7 @@ export default {
 	},
 
 	banner(v, mode, port, dev, wan, wanUp, phone) {
-		const fix = h('a', { href: SETUP, class: 'btn btn-sm btn-warning mt-2' }, 'Open Quick Setup');
+		const fix = setupLink();
 		if (v.level != 'ok')
 			return alert(v.level, v.title, v.text, /login|serial|ISP has not accepted/i.test(v.title + v.text) ? fix : null);
 		if (phone && mode != 'bridge')
@@ -174,8 +187,6 @@ export default {
 	fibre(mode, st, v, ln, pon) {
 		if (!line.fibre()) return null;
 		const link = [ 'Fibre details', '#/fibre' ];
-		if (mode == 'router')
-			return card('fibre', 'Fibre', badge('off', 'Not used'), h('p', { class: 'text-sm opacity-70' }, 'In router mode the Internet comes in on a LAN port, so this box’s fibre is idle.'), link);
 		const ok = st.state == 5, light = line.dbm(st.bosa_rx_power_nw) != null;
 		const dl = rows([ [ 'Signal received (Rx)', fmtDbm(st.bosa_rx_power_nw) ] ]);
 		dl.append(rxMeter(st.bosa_rx_power_nw, ln.thr), ...rows([
@@ -188,7 +199,7 @@ export default {
 		return card('fibre', 'Fibre', ok ? badge('ok', 'Registered') : light ? badge('warn', 'Not registered') : badge('bad', 'No light'), dl, link);
 	},
 
-	wifi(mode, ifaces, assoc) {
+	wifi(mode, ifaces, assoc, radios) {
 		const on = ifaces.map(w => w.disabled != '1' && uci.get('wireless', w.device, 'disabled') != '1');
 		const n = on.filter(Boolean).length;
 		return card('wifi', 'Wi-Fi',
@@ -197,7 +208,8 @@ export default {
 			: h('ul', {}, ifaces.map((w, i) => h('li', { class: 'flex items-center gap-3 py-2.5 border-b border-base-300 first:pt-0 last:pb-0 last:border-b-0' },
 				h('div', { class: 'flex-1 min-w-0' },
 					h('div', { class: 'text-xs opacity-60' }, uci.get('wireless', w.device, 'band') == '5g' ? '5 GHz' : '2.4 GHz'),
-					h('div', { class: on[i] ? 'font-medium truncate' : 'font-medium truncate opacity-50' }, w.ssid || '?')),
+					h('div', { class: on[i] ? 'font-medium truncate' : 'font-medium truncate opacity-50' }, w.ssid || '?'),
+					on[i] && radioLine(radios[i]) && h('div', { class: 'text-xs opacity-60 mt-0.5' }, radioLine(radios[i]))),
 				on[i] ? h('span', { class: 'text-sm whitespace-nowrap' }, h('b', {}, assoc[i].length), ' connected') : badge('off', 'Off')))),
 			[ 'Change Wi-Fi', '#/wifi' ]);
 	},
@@ -243,23 +255,19 @@ export default {
 		let actions = null;
 		if (pi.running) {
 			if (pi.blocking == 'enabled') {
-				actions = h('div', { class: 'flex items-center gap-2 pt-1' },
-					h('span', { class: 'text-xs opacity-60' }, 'Pause:'),
-					h('button', {
+				actions = h('div', { class: 'flex flex-wrap items-center justify-between gap-2' },
+					h('span', { class: 'text-sm opacity-70' }, 'Pause blocking'),
+					h('div', { class: 'join' }, [ [ 5, '5 min' ], [ 15, '15 min' ] ].map(([ m, lbl ]) => h('button', {
 						type: 'button',
-						class: 'btn btn-xs btn-outline',
-						onclick: async () => { await call('alphawrt-pihole', 'pause', { minutes: 5 }); tick(); }
-					}, '5m'),
-					h('button', {
-						type: 'button',
-						class: 'btn btn-xs btn-outline',
-						onclick: async () => { await call('alphawrt-pihole', 'pause', { minutes: 15 }); tick(); }
-					}, '15m'));
+						class: 'btn btn-sm join-item',
+						onclick: async () => { await call('alphawrt-pihole', 'pause', { minutes: m }); tick(); }
+					}, lbl))));
 			} else if (pi.blocking == 'disabled') {
-				actions = h('div', { class: 'pt-1' },
+				actions = h('div', { class: 'flex flex-wrap items-center justify-between gap-2' },
+					h('span', { class: 'text-sm opacity-70' }, 'Blocking is paused'),
 					h('button', {
 						type: 'button',
-						class: 'btn btn-xs btn-primary',
+						class: 'btn btn-sm btn-primary',
 						onclick: async () => { await call('alphawrt-pihole', 'pause', { minutes: 0 }); tick(); }
 					}, 'Resume blocking'));
 			}
@@ -284,7 +292,7 @@ export default {
 					mode == 'bridge' && [ 'Other LAN ports', lan ]
 				]),
 				h('div', { class: 'flex flex-wrap justify-end gap-1' },
-					h('a', { href: '/cgi-bin/luci/', class: 'btn btn-ghost btn-sm' }, 'Advanced settings', icon('external', 'size-4')),
+					h('a', { href: '/cgi-bin/luci/', class: 'btn btn-ghost btn-sm text-primary' }, 'Advanced settings', icon('external', 'size-4')),
 					h('a', { href: '#/system', class: 'btn btn-ghost btn-sm text-primary' }, 'System', icon('chevron', 'size-4')))),
 			null);
 	}

@@ -10,7 +10,7 @@ import { save } from '../lib/apply.js';
 import { qrSvg, wifiQr } from '../lib/qr.js';
 
 const BAND = { '2g': '2.4 GHz', '5g': '5 GHz', '6g': '6 GHz' };
-const SECURITY = [ [ 'wpa2-wpa3', 'WPA2 + WPA3 (recommended)' ], [ 'wpa2', 'WPA2 only' ], [ 'wpa3', 'WPA3 only' ] ];
+const SECURITY = [ [ 'wpa2-wpa3', 'WPA2 + WPA3 (recommended)' ], [ 'wpa2', 'WPA2 only (printers and older devices)' ], [ 'wpa3', 'WPA3 only' ] ];
 const ENCRYPTION = { wpa2: 'psk2', 'wpa2-wpa3': 'sae-mixed', wpa3: 'sae' };
 
 /* WPA passphrase: 8-63 printable characters, or 64 hex digits (not with WPA3 only) */
@@ -37,12 +37,12 @@ export default {
 		if (!bands.length)
 			return main.append(h('p', {}, 'No Wi-Fi radios found.'));
 		if (st.mode == 'bridge')
-			main.append(h('div', { role: 'status', class: 'alert alert-soft alert-info text-sm' }, icon('warn'),
+			main.append(h('div', { role: 'status', class: 'alert alert-soft alert-info text-sm items-start' }, icon('info', 'size-5 shrink-0'),
 				'In bridge mode your own router normally does Wi-Fi. If you switch this box’s Wi-Fi on, it serves the devices on LAN 2–4, not your router’s network.'));
 
 		const together = toggle('Same name and password on both bands', st.same_name, 'Phones and laptops pick the faster band by themselves.');
 		const pw = (label, value, sec) => field(label, { value: value || '', password: true, autocomplete: 'new-password',
-			hint: sec == 'wpa3' ? '8 to 63 characters. WPA3 only: older devices may not connect.' : '8 to 63 characters.' });
+			hint: sec == 'wpa3' ? '8 to 63 characters. WPA3 only: older devices may not connect.' : sec == 'wpa2-wpa3' ? '8 to 63 characters. If a printer or older device won’t connect, choose WPA2 only.' : '8 to 63 characters.' });
 		const shared = { ssid: field('Network name', { value: bands[0].ssid || '', maxlength: 32 }), key: pw('Password', bands[0].key),
 			sec: choice('Security', SECURITY, secOf(bands[0].security)) };
 
@@ -50,7 +50,7 @@ export default {
 			const p = { b, on: toggle(`${BAND[b.band] || b.band} on`, b.enabled),
 				ssid: field('Network name', { value: b.ssid || '', maxlength: 32 }), key: pw('Password', b.key),
 				sec: choice('Security', SECURITY, secOf(b.security)),
-				chan: choice('Channel', [ [ 'auto', 'Auto (self-healing)' ], ...(b.channels || []).map(c => [ String(c.channel), `${c.channel}${c.dfs ? ' · radar check' : ''}` ]) ],
+				chan: choice('Channel', [ [ 'auto', 'Auto' ], ...(b.channels || []).map(c => [ String(c.channel), `${c.channel}${c.dfs ? ' · radar check' : ''}` ]) ],
 					b.auto_channel ? 'auto' : String(b.channel)),
 				width: choice('Width', (b.widths || []).map(w => [ String(w), `${w} MHz` ]), String(b.width_mhz)),
 				info: h('div') };
@@ -75,7 +75,7 @@ export default {
 		const qrButton = (ssid, key) => h('button', { type: 'button', class: 'btn btn-ghost btn-sm', onclick: () => showQr(ssid, key) }, 'Show QR code');
 		const radio = p => h('div', { class: 'grid grid-cols-2 gap-3' }, p.chan, p.width);
 
-		const steer = st.band_steering?.installed && toggle('Band steering', st.band_steering.enabled,
+		const steer = st.band_steering?.installed && toggle('Steer devices to the best band', st.band_steering.enabled,
 			'Nudges phones and laptops onto the faster band when they’re close enough. Fast roaming (802.11k/v) stays on either way.');
 
 		const g = st.guest || {};
@@ -85,16 +85,20 @@ export default {
 		if (!g.available) for (const x of Object.values(guest)) x.input.disabled = true;
 
 		const body = h('div', { class: 'grid gap-4 lg:grid-cols-2 items-start' });
+		const guestCard = () => card('wifi', 'Guest Wi-Fi', g.enabled ? badge('ok', `${g.clients || 0} connected`) : badge('off', 'Off'),
+			h('div', { class: g.available ? '' : 'opacity-50' }, guest.on, guest.ssid, guest.key, guest.sec,
+				!g.available && h('p', { class: 'text-sm mt-2' }, g.reason == 'bridge' ? 'Your own router handles guest Wi-Fi in bridge mode.' : 'Guest Wi-Fi isn’t available right now.'),
+				g.enabled && h('div', { class: 'card-actions justify-end mt-3' }, qrButton(g.ssid, g.key))));
+		/* two columns: the two bands always share a row, and the guest card
+		 * sits beside the tall card it matches */
 		const draw = () => body.replaceChildren(...[
 			together.input.checked && card('wifi', 'Your Wi-Fi', null, h('div', {}, shared.ssid, shared.key, shared.sec,
-				h('div', { class: 'card-actions justify-end mt-2' }, qrButton(bands[0].ssid, bands[0].key)))),
+				h('div', { class: 'card-actions justify-end mt-3' }, qrButton(bands[0].ssid, bands[0].key)))),
+			together.input.checked && guestCard(),
 			per.map(p => card('wifi', BAND[p.b.band] || p.b.band, p.b.enabled ? badge('ok', `${p.b.clients} connected`) : badge('off', 'Off'),
 				h('div', {}, p.on, !together.input.checked && [ p.ssid, p.key, p.sec ], radio(p), p.info,
-					!together.input.checked && p.b.enabled && h('div', { class: 'card-actions justify-end mt-2' }, qrButton(p.b.ssid, p.b.key))))),
-			card('wifi', 'Guest Wi-Fi', g.enabled ? badge('ok', `${g.clients || 0} connected`) : badge('off', 'Off'),
-				h('div', { class: g.available ? '' : 'opacity-50' }, guest.on, guest.ssid, guest.key, guest.sec,
-					!g.available && h('p', { class: 'text-sm mt-2' }, g.reason == 'bridge' ? 'Your own router handles guest Wi-Fi in bridge mode.' : 'Guest Wi-Fi isn’t available right now.'),
-					g.enabled && h('div', { class: 'card-actions justify-end mt-2' }, qrButton(g.ssid, g.key)))),
+					!together.input.checked && p.b.enabled && h('div', { class: 'card-actions justify-end mt-3' }, qrButton(p.b.ssid, p.b.key))))),
+			!together.input.checked && guestCard(),
 			steer && card('wifi', 'Band steering', null, steer)
 		].flat().filter(Boolean));
 		together.input.addEventListener('change', draw);
@@ -120,7 +124,9 @@ export default {
 			/* OpenWrt then picks the PMF setting that matches the encryption */
 			ops.push([ 'unset', 'wireless', p.b.iface, 'ieee80211w' ]);
 			/* the band is on only if its radio is too: Advanced can switch off either */
-			const radio = { channel: p.chan.input.value, ...(p.width.input.value ? { htmode: `HE${p.width.input.value}` } : {}) };
+			const gen = /^EHT/.test(uci.get('wireless', p.b.radio, 'htmode')) ? 'EHT' : 'HE', width = p.width.input.value;
+			/* keep Wi-Fi 7 radios on Wi-Fi 7. Auto can't pick 160 MHz: only channels 36-64 and 100-128 have it */
+			const radio = { channel: width == '160' && p.chan.input.value == 'auto' ? '100' : p.chan.input.value, ...(width ? { htmode: `${gen}${width}` } : {}) };
 			ops.push([ 'set', 'wireless', p.b.radio, radio ]);
 			if (on) ops.push([ 'unset', 'wireless', p.b.radio, 'disabled' ]);
 		}

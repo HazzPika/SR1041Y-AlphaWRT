@@ -1,7 +1,7 @@
 // rpcd backend for Pi-hole on AlphaWRT (Simple UI and LuCI).
 //   status      on/off, available (not in bridge mode), blocking, preset,
 //               domains on the lists, last update, admin page port
-//   set         {enabled, preset, tif, password}: switch Pi-hole on/off etc.
+//   set         {enabled, preset, tif, strict, password}: switch Pi-hole on/off etc.
 //   update      rebuild gravity now (in the background)
 //   pause       {minutes}: stop blocking for that long; 0 = block again
 //   stats       {top}: last 24 h totals, top blocked domains, top clients
@@ -18,6 +18,7 @@ import { cursor } from 'uci';
 
 const DB = '/tmp/pihole/gravity.db';
 const FTL = '/usr/bin/pihole-FTL';
+const TOML = '/etc/pihole/pihole.toml';
 const PIHOLE = '/usr/local/bin/pihole';
 const BYPASS = 'AlphaWRT bypass';
 
@@ -131,10 +132,13 @@ const methods = {
 				timer: b?.timer ?? 0,
 				preset: uci.get('pihole', 'main', 'preset') ?? 'multi',
 				tif: uci.get('pihole', 'main', 'tif') == '1',
+				strict: uci.get('pihole', 'main', 'strict') == '1',
 				domains: access(DB) ? info('gravity_count') : 0,
 				last_update: access(DB) ? info('updated') : 0,
 				updating: access(DB + '.new') == true,
-				password_set: sh(`${FTL} --config webserver.api.pwhash 2>/dev/null`) != '',
+				// no pihole.toml until Pi-hole first runs: FTL would log a
+				// missing-config error on every poll (issue 0036)
+				password_set: access(TOML) == true && sh(`${FTL} --config webserver.api.pwhash 2>/dev/null`) != '',
 				admin_port: 8080,
 				admin_path: '/admin/',
 				web_installed: access('/usr/share/pihole/www/admin/index.lp') == true
@@ -143,7 +147,7 @@ const methods = {
 	},
 
 	set: {
-		args: { enabled: true, preset: 'multi', tif: true, password: 'password' },
+		args: { enabled: true, preset: 'multi', tif: true, strict: true, password: 'password' },
 		call: function(req) {
 			const a = req.args;
 			if (a.preset != null && !length(filter(PRESETS, p => p.id == a.preset)))
@@ -163,6 +167,8 @@ const methods = {
 				uci.set('pihole', 'main', 'preset', a.preset);
 			if (a.tif != null)
 				uci.set('pihole', 'main', 'tif', a.tif ? '1' : '0');
+			if (a.strict != null)
+				uci.set('pihole', 'main', 'strict', a.strict ? '1' : '0');
 			uci.commit('pihole');
 
 			// moves dnsmasq, restarts FTL, then updates gravity in the background

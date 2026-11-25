@@ -27,6 +27,10 @@ const ICONS = {
 	box: 'M3 13h18v6H3zM7 16h.01M11 16h.01M8 13 6 6M16 13l2-7',
 	vpn: 'M12 3l8 3v6c0 5-4 8-8 9-4-1-8-4-8-9V6z',
 	phone: 'M7 2h10a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zM11 18h2',
+	speed: 'M4 17a8 8 0 1 1 16 0M12 17l4-5M12 17h.01',
+	sun: 'M12 3v2M12 19v2M5.6 5.6 7 7M17 17l1.4 1.4M3 12h2M19 12h2M5.6 18.4 7 17M17 7l1.4-1.4M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z',
+	moon: 'M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z',
+	auto: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 3v18M12 8h4M12 12h5M12 16h4',
 	block: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM5.6 5.6l12.8 12.8',
 	system: 'M4 6h16M4 12h16M4 18h16M9 4v4M15 10v4M7 16v4',
 	wand: 'M4 20 16 8M14 3v3M18 7h3M17 4l2-2',
@@ -36,6 +40,7 @@ const ICONS = {
 	warn: 'M12 3l10 18H2zM12 10v4M12 17h.01',
 	bad: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM9 9l6 6M15 9l-6 6',
 	off: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM8 12h8',
+	info: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 11v5M12 8h.01',
 	cable: 'M4 8h16v8H4zM8 16v3M16 16v3M8 12h8',
 	chevron: 'M9 6l6 6-6 6',
 	eye: 'M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12zM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z',
@@ -79,7 +84,7 @@ export function badge(level, text) {
 
 export function alert(level, title, text, action) {
 	return h('div', { role: level == 'bad' ? 'alert' : 'status', class: `alert alert-soft ${LEVEL[level][1]} items-start` },
-		icon(LEVEL[level][2], 'size-6 shrink-0'),
+		icon(level == 'off' ? 'info' : LEVEL[level][2], 'size-6 shrink-0'),
 		h('div', { class: 'space-y-1' },
 			h('div', { class: 'font-bold text-base' }, title),
 			text && h('div', { class: 'text-sm' }, text),
